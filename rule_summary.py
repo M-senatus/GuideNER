@@ -528,7 +528,11 @@ def main():
     
     # tokenizer 用于 chat template 与输出清洗，vLLM 用于实际生成。
     tokenizer = AutoTokenizer.from_pretrained(model_path)
-    llm = LLM(model=model_path)
+    llm = LLM(
+        model=model_path,
+        enforce_eager=True,
+        max_model_len=8192,
+    )
     sampling_params = SamplingParams(temperature=args.temperature, top_p=args.top_p, max_tokens=256)
     
     # 三类输出文件：
