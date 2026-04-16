@@ -23,6 +23,13 @@
 - `EasyChatTemplating/`
   - 聊天模板与输出清洗工具模块。
   - 为 `rule_summary.py` 与 `run_withrule.py` 提供 prompt 格式转换和特殊 token 清洗能力。
+- `../model/`
+  - 仓库外部的本地模型目录，不在当前版本库内。
+  - 当前按用户提供信息，`rule_summary.py` 与 `run_withrule.py` 约定从这里读取四个模型：
+    - `bge-m3`
+    - `Llama-3.1-8B-Instruct`
+    - `Ministral-3-8B-Instruct-2512`
+    - `Qwen2.5-7B-Instruct`
 
 ## 根目录关键文件
 
@@ -183,14 +190,15 @@
 
 > 本仓库没有独立配置文件体系，参数主要硬编码在 Python 脚本中。
 
-### `rule_summary.py` / `run_withrule.py` / `ner_evaluate.py` 中的 `model_path_dict` 与 `dataset_path_dict`
+### `rule_summary.py` / `run_withrule.py` 中的 `model_path_dict` 与相关脚本中的 `dataset_path_dict`
 
 - 文件路径：
   - `rule_summary.py`
   - `run_withrule.py`
-  - `ner_evaluate.py`
 - 主要作用：
   - 通过字典维护模型名到本地模型路径、数据集名到目录路径的映射。
+  - 当前这两个脚本将模型路径统一映射到仓库外部兄弟目录 `../model/<model_name>`。
+  - 当前显式支持的模型名为：`bge-m3`、`Llama-3.1-8B-Instruct`、`Ministral-3-8B-Instruct-2512`、`Qwen2.5-7B-Instruct`。
 - 谁会调用它 / 它会调用什么：
   - 在各自 `main()` 中通过 `args.model_name`、`args.dataset_name` 查询。
 - 高风险修改级别：高。
@@ -201,8 +209,8 @@
 
 - 当前仓库未发现 `.sh`、`.bat`、`Makefile`、任务编排脚本。
 - 实际运行方式由 `README.md` 给出：
-  - 先执行 `python rule_summary.py`
-  - 再执行 `python run_withrule.py`
+  - 先执行 `python rule_summary.py --model_name Llama-3.1-8B-Instruct`
+  - 再执行 `python run_withrule.py --model_name Llama-3.1-8B-Instruct`
   - 如需评测，再执行 `python ner_evaluate.py`
 
 ## 工具函数 / 公共模块
@@ -399,6 +407,9 @@
 
 # 待确认项
 
+- `../model`
+  - 当前文档与 `rule_summary.py`、`run_withrule.py` 已按用户说明维护为仓库外兄弟目录。
+  - 在本次工作区检查中，`D:\Projects\model` 尚未实际出现；若实际部署路径不同，需要同步更新脚本中的 `MODEL_ROOT` 约定。
 - `dataset_path_dict` 中声明的 `ace04`、`ace05`、`genia`
   - 代码支持这些数据集名称，但仓库内未看到对应目录。
   - 可能是论文完整版本中的预留接口，也可能是未提交的数据目录。
@@ -412,4 +423,3 @@
   - 变量已定义但当前推理结果解析实际使用的是 `label_pattern`，`result_pattern` 似乎未被使用，是否为遗留代码待确认。
 - `import logging`
   - 在多个脚本中导入，但未见有效日志配置与调用，可能是预留依赖或遗留导入。
-

@@ -10,7 +10,14 @@ from EasyChatTemplating.util_tools import convert_userprompt_transformers, skip_
 
 result_pattern = r'\{.*\}'
 label_pattern = r'\[\[(.*?)\]\]'
-model_path_dict = {"llama3-chat": "../../pretrained_models/llama3-chat"}
+MODEL_ROOT = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "model"))
+DEFAULT_MODEL_NAME = "Llama-3.1-8B-Instruct"
+model_path_dict = {
+    "bge-m3": os.path.join(MODEL_ROOT, "bge-m3"),
+    "Llama-3.1-8B-Instruct": os.path.join(MODEL_ROOT, "Llama-3.1-8B-Instruct"),
+    "Ministral-3-8B-Instruct-2512": os.path.join(MODEL_ROOT, "Ministral-3-8B-Instruct-2512"),
+    "Qwen2.5-7B-Instruct": os.path.join(MODEL_ROOT, "Qwen2.5-7B-Instruct"),
+}
 dataset_path_dict = {"conll2003": "./datasets/conll2003",
                      "ace04": "./datasets/ace04",
                      "ace05": "./datasets/ace05",
@@ -108,7 +115,8 @@ def main():
                         default='conll2003',
                         choices=["conll2003", "ace04", "ace05", "genia"])
     parser.add_argument('--model_name',
-                        default='llama3-chat')
+                        default=DEFAULT_MODEL_NAME,
+                        choices=list(model_path_dict.keys()))
     parser.add_argument('--temperature',
                         default=0.8,
                         type=float),

@@ -56,8 +56,15 @@ result_pattern = r'\{.*\}'
 # 从验证阶段输出中抓取实体列表，例如 [["EU", "organization"], ...]。
 valid_pattern = r'\[\[(.*?)\]\]'
 
-# 命令行中的 model_name 会映射到本地模型目录。
-model_path_dict = {"llama3-chat": "../../pretrained_models/llama3-chat"}
+# 命令行中的 model_name 会映射到仓库外部的本地模型目录 ../model/<model_name>。
+MODEL_ROOT = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "model"))
+DEFAULT_MODEL_NAME = "Llama-3.1-8B-Instruct"
+model_path_dict = {
+    "bge-m3": os.path.join(MODEL_ROOT, "bge-m3"),
+    "Llama-3.1-8B-Instruct": os.path.join(MODEL_ROOT, "Llama-3.1-8B-Instruct"),
+    "Ministral-3-8B-Instruct-2512": os.path.join(MODEL_ROOT, "Ministral-3-8B-Instruct-2512"),
+    "Qwen2.5-7B-Instruct": os.path.join(MODEL_ROOT, "Qwen2.5-7B-Instruct"),
+}
 # 命令行中的 dataset_name 会映射到对应数据目录。
 # 当前仓库实际只看到了 conll2003，其他数据集路径更像是预留接口。
 dataset_path_dict = {"conll2003": "./datasets/conll2003",
@@ -481,13 +488,14 @@ def summary(rule_file_name, label_file, fw, top_k=20):
 
 def main():
     # 该脚本通常直接运行：
-    # python rule_summary.py --dataset_name conll2003 --model_name llama3-chat
+    # python rule_summary.py --dataset_name conll2003 --model_name Llama-3.1-8B-Instruct
     parser = argparse.ArgumentParser()
     parser.add_argument('--dataset_name',
                         default='conll2003',
                         choices=["conll2003", "ace04", "ace05", "genia"])
     parser.add_argument('--model_name',
-                        default='llama3-chat')
+                        default=DEFAULT_MODEL_NAME,
+                        choices=list(model_path_dict.keys()))
     parser.add_argument('--temperature',
                         default=0.8,
                         type=float),
