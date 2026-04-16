@@ -9,29 +9,6 @@ from vllm import LLM, SamplingParams
 from transformers import AutoTokenizer
 from EasyChatTemplating.util_tools import convert_userprompt_transformers, skip_special_tokens_transformers
 
-# 输出文件中的规则格式速查：
-# 1. *_rules.txt
-#    每行一个 JSON 记录，predicted_rules 是“类别 -> 规则列表”：
-#    {"text": "...", "labels": [["EU", "organization"]], "status": "success",
-#     "predicted_rules": {"organization": ["union"]}}
-# 2. *_validrules.txt
-#    每行一个 JSON 记录，right_rules / wrong_rules 是“单条规则”的列表，
-#    列表中的每个元素都是 {类别: 规则文本}：
-#    {"text": "...", "label": [["EU", "organization"]],
-#     "orignal_rules": {"organization": ["union"]},
-#     "right_rules": [{"organization": "union"}],
-#     "wrong_rules": [],
-#     "status": "success",
-#     "predict_labels": [["EU", "organization"]]}
-# 3. *_summaryrules.txt
-#    整个文件是一个 JSON 对象，表示每个类别最终保留的高频规则列表：
-#    {"organization": ["union", "financial institution"],
-#     "person": ["name"],
-#     "location": ["country"]}
-# 4. *_wrongsummaryrules.txt
-#    形式与 *_summaryrules.txt 相同，但统计的是 wrong_rules：
-#    {"organization": ["bureau"], "person": ["journalist"]}
-
 """
 本脚本是 GuideNER 的“规则构建”主入口，整体分为三步：
 1. 读取训练集 train.jsonl，让 LLM 根据文本和实体标注总结候选规则；
@@ -424,7 +401,7 @@ def valied_rules(fr, fw, batch_size, valid_prompt, tokenizer, llm, sampling_para
             messages.append(message)
             rules_list.append(rules)
            
-            outputs = llm.generate(messages, sampling_params)
+            outputs = llm.generate(messages, sampling_params, use_tqdm=False)
             valid_batch(outputs, tokenizer, fw, texts, labels, rules_list)
             messages = []
             texts = []
@@ -436,7 +413,7 @@ def valied_rules(fr, fw, batch_size, valid_prompt, tokenizer, llm, sampling_para
     
     # 别遗漏最后一个不足 batch_size 的尾批次。
     if len(messages) > 0:
-        outputs = llm.generate(messages, sampling_params)
+        outputs = llm.generate(messages, sampling_params, use_tqdm=False)
         valid_batch(outputs, tokenizer, fw, texts, labels, rules_list)
     
     fw.close()
@@ -586,7 +563,7 @@ def main():
                 labels.append(entity_labels)
                 messages.append(message)
                 
-                outputs = llm.generate(messages, sampling_params)
+                outputs = llm.generate(messages, sampling_params, use_tqdm=False)
                 
                 predict_batch(outputs, tokenizer, fw, texts, labels)
                 
@@ -597,7 +574,7 @@ def main():
             overall_progress.update(1)
         
         if len(messages) > 0:
-            outputs = llm.generate(messages, sampling_params)
+            outputs = llm.generate(messages, sampling_params, use_tqdm=False)
             predict_batch(outputs, tokenizer, fw, texts, labels)
         
         fw.close()
