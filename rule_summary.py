@@ -3,6 +3,7 @@ import re
 import os
 import json
 import logging
+import sys
 from tqdm import tqdm
 from vllm import LLM, SamplingParams
 from transformers import AutoTokenizer
@@ -552,7 +553,13 @@ def main():
     task_prompt = eval(f"{args.dataset_name}_prompt")
     valid_prompt = eval(f"{args.dataset_name}_valid_prompt")
     train_file = os.path.join(dataset_path, "train.jsonl")
-    overall_progress = tqdm(total=count_lines(train_file), desc="Overall progress | generate rules", unit="step")
+    overall_progress = tqdm(
+        total=count_lines(train_file),
+        desc="Overall progress | generate rules",
+        unit="step",
+        file=sys.stdout,
+        dynamic_ncols=True,
+    )
     
     # 第一步：遍历训练集，为每条样本生成候选规则。
     with open(os.path.join(dataset_path, "train.jsonl"), "r", encoding='utf8') as f:

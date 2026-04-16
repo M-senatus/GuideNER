@@ -14,8 +14,9 @@ TEMPERATURE="${TEMPERATURE:-0}"
 TOP_P="${TOP_P:-1}"
 
 export CUDA_VISIBLE_DEVICES=0,1
+export PYTHONUNBUFFERED=1
 
-python rule_summary.py \
+python -u rule_summary.py \
   --dataset_name "$DATASET_NAME" \
   --model_name "$MODEL_NAME" \
   --temperature "$TEMPERATURE" \
