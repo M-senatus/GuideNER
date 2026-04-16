@@ -168,11 +168,17 @@ def correspondings(labels, result):
 
         final_result.append([label, rule])
     return final_result
+
+
+def count_lines(file_path):
+    """Count file lines to estimate stage sizes for the overall progress bar."""
+    with open(file_path, "r", encoding="utf8") as f:
+        return sum(1 for _ in f)
         
 
 
 
-def summary(rule_file_name, label_file, fw, top_k=20):
+def summary(rule_file_name, label_file, fw, top_k=20, progress_bar=None):
     # summary 系列文件最终写出的不是“按行记录”，而是单个 JSON 对象：
     # {
     #   "organization": ["rule_a", "rule_b", ...],
@@ -357,7 +363,7 @@ def valid_batch(outputs, tokenizer, fw, texts, labels, rules_list):
             fw.write("\n")
             fw.flush()
             
-def valied_rules(fr, fw, batch_size, valid_prompt, tokenizer, llm, sampling_params):
+def valied_rules(fr, fw, batch_size, valid_prompt, tokenizer, llm, sampling_params, progress_bar=None):
     """
     对第一阶段生成的候选规则做过滤，并把可验证的样本送入第二阶段验证。
 
@@ -387,10 +393,16 @@ def valied_rules(fr, fw, batch_size, valid_prompt, tokenizer, llm, sampling_para
         # 2. 规则不是字典：第一阶段输出没有遵守“类别 -> 规则列表”的约定结构；
         # 3. 规则条数和类别数量对不上真实标注：后面无法把“第 n 个实体”稳定映射到“第 n 条规则”。
         if len(entity_labels) == 0:
+            if progress_bar is not None:
+                progress_bar.update(1)
             continue
         if not isinstance(rules, dict):
+            if progress_bar is not None:
+                progress_bar.update(1)
             continue
         if not type_num_equal(entity_labels, rules):
+            if progress_bar is not None:
+                progress_bar.update(1)
             continue
         
         # 把规则重新放回 NER 任务，让模型在“原句 + 规则”的条件下再次做实体识别。
@@ -417,6 +429,9 @@ def valied_rules(fr, fw, batch_size, valid_prompt, tokenizer, llm, sampling_para
             texts = []
             labels = []
             rules_list = []
+
+        if progress_bar is not None:
+            progress_bar.update(1)
     
     # 别遗漏最后一个不足 batch_size 的尾批次。
     if len(messages) > 0:
@@ -429,7 +444,7 @@ def valied_rules(fr, fw, batch_size, valid_prompt, tokenizer, llm, sampling_para
         
 
 
-def summary(rule_file_name, label_file, fw, top_k=20):
+def summary(rule_file_name, label_file, fw, top_k=20, progress_bar=None):
     # Override the earlier implementation and emit triples:
     # [entity_type, rule_text, support_examples]
     result_dict = {}
@@ -443,6 +458,8 @@ def summary(rule_file_name, label_file, fw, top_k=20):
     with open(rule_file_name, 'r', encoding='utf8') as f:
         for line in f:
             line_json = json.loads(line)
+            if progress_bar is not None:
+                progress_bar.update(1)
             if "orignal_rules" not in line_json or "label" not in line_json or "predict_labels" not in line_json:
                 continue
 
@@ -530,17 +547,20 @@ def main():
     
     task_prompt = eval(f"{args.dataset_name}_prompt")
     valid_prompt = eval(f"{args.dataset_name}_valid_prompt")
+    train_file = os.path.join(dataset_path, "train.jsonl")
+    overall_progress = tqdm(total=count_lines(train_file), desc="Overall progress | generate rules", unit="step")
     
     # 第一步：遍历训练集，为每条样本生成候选规则。
     with open(os.path.join(dataset_path, "train.jsonl"), "r", encoding='utf8') as f:
-        for i, line in tqdm(enumerate(f)):
+        for i, line in enumerate(f):
             line_json = json.loads(line)
             
             text = line_json["text"]
             entity_labels = line_json["entity_labels"]
             
             # 无实体样本对规则总结帮助有限，这里直接跳过。
-            if len (entity_labels) == 0:
+            if len(entity_labels) == 0:
+                overall_progress.update(1)
                 continue
             
             prompt_predict = task_prompt.format(input_text = text, input_annotations = entity_labels)
@@ -562,6 +582,8 @@ def main():
                 messages = []
                 texts = []
                 labels = []
+
+            overall_progress.update(1)
         
         if len(messages) > 0:
             outputs = llm.generate(messages, sampling_params)
@@ -573,11 +595,18 @@ def main():
     fr = open(rule_file_name, 'r', encoding='utf8')
     fw = open(valid_rule_file_name, 'a', encoding='utf8')
     
-    valied_rules(fr, fw, batch_size, valid_prompt, tokenizer, llm, sampling_params)
+    overall_progress.total += count_lines(rule_file_name)
+    overall_progress.set_description("Overall progress | validate rules")
+    overall_progress.refresh()
+    valied_rules(fr, fw, batch_size, valid_prompt, tokenizer, llm, sampling_params, progress_bar=overall_progress)
     
     # 第三步：从验证通过的规则中统计高频规则，得到最终摘要规则。
     fw = open(summary_file_name, 'a', encoding='utf8')
-    summary(valid_rule_file_name, label_file, fw)
+    overall_progress.total += count_lines(valid_rule_file_name)
+    overall_progress.set_description("Overall progress | summarize rules")
+    overall_progress.refresh()
+    summary(valid_rule_file_name, label_file, fw, progress_bar=overall_progress)
+    overall_progress.close()
     
     
 if __name__ == "__main__":
