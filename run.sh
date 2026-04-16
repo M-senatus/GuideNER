@@ -8,13 +8,12 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$ROOT_DIR"
 
-GPU_DEVICE="${GPU_DEVICE:-0}"
 MODEL_NAME="${MODEL_NAME:-Llama-3.1-8B-Instruct}"
 DATASET_NAME="${DATASET_NAME:-conll2003}"
 TEMPERATURE="${TEMPERATURE:-0}"
 TOP_P="${TOP_P:-1}"
 
-export CUDA_VISIBLE_DEVICES="$GPU_DEVICE"
+export CUDA_VISIBLE_DEVICES=0
 
 python rule_summary.py \
   --dataset_name "$DATASET_NAME" \
