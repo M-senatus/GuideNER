@@ -8,14 +8,41 @@ from vllm import LLM, SamplingParams
 from transformers import AutoTokenizer
 from EasyChatTemplating.util_tools import convert_userprompt_transformers, skip_special_tokens_transformers
 
+"""
+本脚本是 GuideNER 的“规则构建”主入口，整体分为三步：
+1. 读取训练集 train.jsonl，让 LLM 根据文本和实体标注总结候选规则；
+2. 再把候选规则回填到识别任务中，检查这些规则是否真的能帮助识别原句中的实体；
+3. 统计验证通过的高频规则，输出为后续推理脚本 run_withrule.py 使用的 summary rules。
+
+运行前至少需要确认：
+1. model_path_dict 中的本地模型路径存在；
+2. datasets/<dataset_name>/train.jsonl 和 labels.jsonl 存在；
+3. 机器环境已经安装 transformers、vllm、tqdm 等依赖。
+
+运行后会在对应数据集目录下追加写出三个文件：
+1. <model_name>_rules.txt：训练集样本对应的原始候选规则；
+2. <model_name>_validrules.txt：回代验证后区分 right/wrong 的规则；
+3. <model_name>_summaryrules.txt：最终汇总后的类别规则摘要。
+
+注意：脚本使用追加模式 "a" 写文件，重复运行会把新结果继续追加到旧文件后面。
+如果你希望得到一次全新的实验结果，通常需要先手动清理旧结果文件。
+"""
+
+# 从模型输出中抓取 JSON 形式的规则结果，例如 {"organization": ["union"]}。
 result_pattern = r'\{.*\}'
+# 从验证阶段输出中抓取实体列表，例如 [["EU", "organization"], ...]。
 valid_pattern = r'\[\[(.*?)\]\]'
+
+# 命令行中的 model_name 会映射到本地模型目录。
 model_path_dict = {"llama3-chat": "../../pretrained_models/llama3-chat"}
+# 命令行中的 dataset_name 会映射到对应数据目录。
+# 当前仓库实际只看到了 conll2003，其他数据集路径更像是预留接口。
 dataset_path_dict = {"conll2003": "./datasets/conll2003",
                      "ace04": "./datasets/ace04",
                      "ace05": "./datasets/ace05",
                      "genia": "./datasets/genia"}
 
+# 规则抽取 prompt：输入一条训练样本及其标注，让 LLM 总结“泛化规则”而不是复述具体实体名。
 conll2003_prompt = """Task: Summarize the generic rules for each named entity category for the named entity recognition task based on the provided text and their corresponding annotations. The output must be structured in JSON format, where the keys represent the entity categories, and the values are lists of rules that have been summarized from the input text and their annotations.
 
 Guidelines: 
@@ -62,7 +89,9 @@ Rules: {summarized_rules}
 Output:
 """
 
-# Wheather labels and result are equal and correspoding
+# 检查真实标注 labels 与 LLM 预测出的规则字典 result 是否在“数量”和“类别分布”上对齐。
+# 这里不检查规则内容是否合理，只检查每个实体类别的条数是否能一一对应。
+# 这样后面才能安全地把“第 n 个同类实体”与“第 n 条同类规则”配对起来。
 def type_num_equal(labels, result):
     labels_len = len(labels)
     result_len = 0
@@ -93,7 +122,8 @@ def type_num_equal(labels, result):
     return True
     
     
-# get the label and result correspondings list
+# 将标注列表与规则字典做顺序对齐，得到 [label, rule] 的对应关系。
+# 例如某句有两个 location，则分别取 result["location"] 中第 1 条和第 2 条规则。
 def correspondings(labels, result):
     label_type_dict = {}
     final_result = []
@@ -113,6 +143,7 @@ def correspondings(labels, result):
 
 
 def summary(rule_file_name, label_file, fw, top_k=20):
+    # result_dict 先按标签文件初始化实体类型，再统计每种规则出现的频次。
     result_dict = {}
     with open(label_file, 'r', encoding='utf8') as f:
         labels_dict = f.readlines()[0]
@@ -126,6 +157,7 @@ def summary(rule_file_name, label_file, fw, top_k=20):
     with open(rule_file_name, 'r', encoding='utf8') as f:
         for i, line in enumerate(f):
             line_json = json.loads(line)
+            # 只有验证成功、且含有 right_rules 的记录才参与最终规则汇总。
             if "right_rules" not in line_json:
                 continue
             right_rules = line_json["right_rules"]
@@ -139,7 +171,9 @@ def summary(rule_file_name, label_file, fw, top_k=20):
                     rule = v
                     if rule not in result_dict[entity_type]:
                         result_dict[entity_type][rule] = 0
-                    result_dict[entity_type][rule] += 1   
+                        result_dict[entity_type][rule] += 1   
+
+    # 对每个实体类别，保留频次最高的若干条规则，作为最终摘要规则。
     rules_dict = {} 
     for k in result_dict:
         rules_dict[k] = []
@@ -155,6 +189,7 @@ def summary(rule_file_name, label_file, fw, top_k=20):
             
 
 def predict_batch(outputs, tokenizer, fw, texts, labels):
+    # 处理“规则抽取阶段”的一批模型输出，并把原始候选规则落盘。
     for j, output in enumerate(outputs):
         clean_text = skip_special_tokens_transformers(tokenizer, output.outputs[0].text)
         result = re.search(result_pattern, clean_text, re.DOTALL)
@@ -163,7 +198,7 @@ def predict_batch(outputs, tokenizer, fw, texts, labels):
         result_dict["text"] = texts[j]
         result_dict["labels"] = labels[j]
         
-        # If llm generate the right result
+        # 如果模型输出中能解析出 JSON 规则，就记为 success。
         if result is not None:
             try:
                 result = eval(result.group())
@@ -172,7 +207,7 @@ def predict_batch(outputs, tokenizer, fw, texts, labels):
             except:
                 result_dict["status"] = "eval_wrong"
                 result_dict["predicted_rules"] = []
-        # if llm generate the wrong result or generate nothing
+        # 如果没有抽到合法 JSON，则记录为空结果，供后续分析失败样本。
         else:
             result_dict["status"] = "none_wrong"
             result_dict["predicted_rules"] = []
@@ -188,10 +223,39 @@ def predict_batch(outputs, tokenizer, fw, texts, labels):
             fw.flush()
             
 def valid_batch(outputs, tokenizer, fw, texts, labels, rules_list):
+    """
+    处理“规则验证阶段”的一批模型输出，并将每条规则标记为有效或无效。
+
+    参数含义：
+    - outputs: 当前 batch 的模型生成结果。每个元素对应一条验证 prompt 的输出。
+    - tokenizer: 用于清理模型输出中的特殊 token。
+    - fw: 写出验证结果的文件句柄。
+    - texts: 当前 batch 中的原始句子列表。
+    - labels: 当前 batch 中每条句子的真实实体标注列表。
+    - rules_list: 当前 batch 中每条句子的候选规则 dict。
+
+    核心思路：
+    1. 先把每条样本的真实实体与候选规则做“按类别、按顺序”的一一对应；
+    2. 再看模型在“原句 + 这些规则”的条件下，是否真的识别回了这些实体；
+    3. 若某实体被识别回来了，就认为与它绑定的那条规则在该样本上是有效的，
+       记入 right_rules，否则记入 wrong_rules。
+    """
+    # 处理“规则验证阶段”的一批模型输出。
+    # 思路是：把某条训练样本的规则再喂回模型，看能否重新识别出原标注实体。
     for j, output in enumerate(outputs):
         text = texts[j]
         real_labels = labels[j]
         rules = rules_list[j]
+        # corres 中每一项是 [真实实体标注, 与之顺序对齐的一条规则]。
+        # 例如：
+        # real_labels = [["Iraq", "location"], ["Saddam", "person"], ["Russia", "location"]]
+        # rules = {"location": ["country", "country"], "person": ["name"]}
+        # 则 corres 会变成：
+        # [
+        #   [["Iraq", "location"], "country"],
+        #   [["Saddam", "person"], "name"],
+        #   [["Russia", "location"], "country"]
+        # ]
         corres = correspondings(real_labels, rules)
         right_rules = []
         wrong_rules = []
@@ -200,26 +264,33 @@ def valid_batch(outputs, tokenizer, fw, texts, labels, rules_list):
 
         clean_text = skip_special_tokens_transformers(tokenizer, output.outputs[0].text)
         result = re.search(valid_pattern, clean_text, re.DOTALL)
+        # 这里落盘的是“验证阶段”的记录，而不是第一阶段原始规则抽取结果。
         result_dict["text"] = text
         result_dict["label"] = real_labels
         result_dict["orignal_rules"] = rules
         
         if result is not None:
             try:
-                # [[entity_name, entity_type]]
+                # 验证阶段期望模型输出实体列表，如 [[实体名, 实体类型], ...]。
                 result = eval(result.group())
+                # 统一地名类别写法，避免 "geo" 与 "geo-political entity" 混用导致比较失败。
                 for i in range(len(result)):
                     if "geo" in result[i][-1]:
                         result[i][-1] = "geo-political entity"
                     
-                # [(entity_name, entity_type), pattern]
+                # 对每条“标注-规则”对应关系，检查该实体是否在模型识别结果中出现。
+                # 出现则认为该规则对这个样本有效，加入 right_rules；否则进 wrong_rules。
                 for k, cor in enumerate(corres):
                     label = cor[0]
                     type = label[-1]
                     if "geo" in type:
                         type = "geo-political entity"
                         label[-1] = "geo-political entity"
+                    # 每条规则最终被记录成 {类别: 规则内容} 的形式，便于后续统计。
                     rules = {type:cor[-1]}
+                    # 这里的判断非常直接：
+                    # 只要这条真实标注 label 出现在模型预测结果 result 中，
+                    # 就把与该实体绑定的规则视为“本样本上的有效规则”。
                     if label in result:
                         right_rules.append(rules)
                     else:
@@ -233,6 +304,7 @@ def valid_batch(outputs, tokenizer, fw, texts, labels, rules_list):
                 result_dict["status"] = "eval_wrong"
                 result_dict["predict_labels"] = []
         else:
+            # 如果模型输出里连实体列表都没抽出来，这条验证记录记为 none_wrong。
             result_dict["status"] = "none_wrong"
             result_dict["predict_labels"] = []
             
@@ -241,6 +313,7 @@ def valid_batch(outputs, tokenizer, fw, texts, labels, rules_list):
             fw.write("\n")
             fw.flush()
         except:
+            # 写文件失败时，仍然尽量把错误状态写出去，避免整批结果丢失。
             result_dict["status"] = "write_wrong"
             result_dict["predict_labels"] = []
             fw.write(json.dumps(result_dict))
@@ -248,6 +321,19 @@ def valid_batch(outputs, tokenizer, fw, texts, labels, rules_list):
             fw.flush()
             
 def valied_rules(fr, fw, batch_size, valid_prompt, tokenizer, llm, sampling_params):
+    """
+    对第一阶段生成的候选规则做过滤，并把可验证的样本送入第二阶段验证。
+
+    这个函数主要做两件事：
+    1. 从 rules.txt 中筛掉结构不可靠、无法一一对齐的规则记录；
+    2. 将剩余记录重新组织成 NER 验证输入，分批交给模型生成，
+       再由 valid_batch(...) 判断哪些规则真正帮助识别出了原实体。
+
+    为什么这里要先过滤？
+    因为后续会依赖 correspondings(...) 按“同类别、同顺序”把实体和规则绑定。
+    如果规则不是字典，或者规则数目与真实实体分布对不上，就无法安全地完成这种绑定。
+    """
+    # 读取规则抽取阶段生成的文件，只保留“结构可对齐”的规则记录进入验证阶段。
     messages = []
     texts = []
     labels = []
@@ -259,6 +345,10 @@ def valied_rules(fr, fw, batch_size, valid_prompt, tokenizer, llm, sampling_para
         entity_labels = line_json["labels"]
         rules = line_json["predicted_rules"]
         
+        # 跳过无法做稳定验证的样本：
+        # 1. 原始标签为空：没有参照答案，就谈不上验证规则有效性；
+        # 2. 规则不是字典：第一阶段输出没有遵守“类别 -> 规则列表”的约定结构；
+        # 3. 规则条数和类别数量对不上真实标注：后面无法把“第 n 个实体”稳定映射到“第 n 条规则”。
         if len(entity_labels) == 0:
             continue
         if not isinstance(rules, dict):
@@ -266,9 +356,13 @@ def valied_rules(fr, fw, batch_size, valid_prompt, tokenizer, llm, sampling_para
         if not type_num_equal(entity_labels, rules):
             continue
         
+        # 把规则重新放回 NER 任务，让模型在“原句 + 规则”的条件下再次做实体识别。
+        # 随后 valid_batch(...) 会比较预测实体和真实实体，
+        # 决定每条规则应进入 right_rules 还是 wrong_rules。
         prompt_predict = valid_prompt.format(except_rules="", input_text = text, summarized_rules = rules)
         message = convert_userprompt_transformers(tokenizer, prompt_predict, add_generation_prompt=True)
         
+        # 先攒满一个 batch 再统一生成，减少模型调用次数。
         if len(messages) < batch_size - 1:
             texts.append(text)
             labels.append(entity_labels)
@@ -287,6 +381,7 @@ def valied_rules(fr, fw, batch_size, valid_prompt, tokenizer, llm, sampling_para
             labels = []
             rules_list = []
     
+    # 别遗漏最后一个不足 batch_size 的尾批次。
     if len(messages) > 0:
         outputs = llm.generate(messages, sampling_params)
         valid_batch(outputs, tokenizer, fw, texts, labels, rules_list)
@@ -298,6 +393,8 @@ def valied_rules(fr, fw, batch_size, valid_prompt, tokenizer, llm, sampling_para
 
 
 def main():
+    # 该脚本通常直接运行：
+    # python rule_summary.py --dataset_name conll2003 --model_name llama3-chat
     parser = argparse.ArgumentParser()
     parser.add_argument('--dataset_name',
                         default='conll2003',
@@ -313,13 +410,19 @@ def main():
     batch_size = 32
     args = parser.parse_args()
     
+    # 根据命令行参数解析出模型目录和数据目录。
     model_path = model_path_dict[args.model_name]
     dataset_path = dataset_path_dict[args.dataset_name]
     
+    # tokenizer 用于 chat template 与输出清洗，vLLM 用于实际生成。
     tokenizer = AutoTokenizer.from_pretrained(model_path)
     llm = LLM(model=model_path)
     sampling_params = SamplingParams(temperature=args.temperature, top_p=args.top_p, max_tokens=256)
     
+    # 三类输出文件：
+    # 1. rules.txt：原始候选规则；
+    # 2. validrules.txt：验证后的规则；
+    # 3. summaryrules.txt：最终供推理使用的摘要规则。
     rule_file_name = os.path.join(dataset_path, f"{args.model_name}_rules.txt")
     valid_rule_file_name = os.path.join(dataset_path, f"{args.model_name}_validrules.txt")
     label_file = os.path.join(dataset_path, "labels.jsonl")
@@ -333,6 +436,7 @@ def main():
     task_prompt = eval(f"{args.dataset_name}_prompt")
     valid_prompt = eval(f"{args.dataset_name}_valid_prompt")
     
+    # 第一步：遍历训练集，为每条样本生成候选规则。
     with open(os.path.join(dataset_path, "train.jsonl"), "r", encoding='utf8') as f:
         for i, line in tqdm(enumerate(f)):
             line_json = json.loads(line)
@@ -340,6 +444,7 @@ def main():
             text = line_json["text"]
             entity_labels = line_json["entity_labels"]
             
+            # 无实体样本对规则总结帮助有限，这里直接跳过。
             if len (entity_labels) == 0:
                 continue
             
@@ -369,11 +474,13 @@ def main():
         
         fw.close()
     
+    # 第二步：验证 rules.txt 中的规则是否真的能帮助识别原句实体。
     fr = open(rule_file_name, 'r', encoding='utf8')
     fw = open(valid_rule_file_name, 'a', encoding='utf8')
     
     valied_rules(fr, fw, batch_size, valid_prompt, tokenizer, llm, sampling_params)
     
+    # 第三步：从验证通过的规则中统计高频规则，得到最终摘要规则。
     fw = open(summary_file_name, 'a', encoding='utf8')
     summary(valid_rule_file_name, label_file, fw)
     
