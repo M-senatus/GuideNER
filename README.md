@@ -24,4 +24,4 @@ Due to licensing restrictions, we can only provide the `CoNLL03` dataset along w
 ```
 
 ## Running
-First, you need to run `python rule_summary.py` to summarize the guidelines corresponding to the dataset. Then, execute `python run_withrule.py` to perform inference and obtain the results.
+First, you need to run `python rule_summary.py` to summarize the guidelines corresponding to the dataset. It writes `<model_name>_summaryrules.txt` as a JSON list of `[entity_type, rule_text, support_examples]`, for example `["location", "country", ["China", "Japan", "Iran"]]`. Then, execute `python run_withrule.py` to perform inference and obtain the results.

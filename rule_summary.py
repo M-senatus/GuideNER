@@ -8,6 +8,29 @@ from vllm import LLM, SamplingParams
 from transformers import AutoTokenizer
 from EasyChatTemplating.util_tools import convert_userprompt_transformers, skip_special_tokens_transformers
 
+# 输出文件中的规则格式速查：
+# 1. *_rules.txt
+#    每行一个 JSON 记录，predicted_rules 是“类别 -> 规则列表”：
+#    {"text": "...", "labels": [["EU", "organization"]], "status": "success",
+#     "predicted_rules": {"organization": ["union"]}}
+# 2. *_validrules.txt
+#    每行一个 JSON 记录，right_rules / wrong_rules 是“单条规则”的列表，
+#    列表中的每个元素都是 {类别: 规则文本}：
+#    {"text": "...", "label": [["EU", "organization"]],
+#     "orignal_rules": {"organization": ["union"]},
+#     "right_rules": [{"organization": "union"}],
+#     "wrong_rules": [],
+#     "status": "success",
+#     "predict_labels": [["EU", "organization"]]}
+# 3. *_summaryrules.txt
+#    整个文件是一个 JSON 对象，表示每个类别最终保留的高频规则列表：
+#    {"organization": ["union", "financial institution"],
+#     "person": ["name"],
+#     "location": ["country"]}
+# 4. *_wrongsummaryrules.txt
+#    形式与 *_summaryrules.txt 相同，但统计的是 wrong_rules：
+#    {"organization": ["bureau"], "person": ["journalist"]}
+
 """
 本脚本是 GuideNER 的“规则构建”主入口，整体分为三步：
 1. 读取训练集 train.jsonl，让 LLM 根据文本和实体标注总结候选规则；
@@ -143,6 +166,13 @@ def correspondings(labels, result):
 
 
 def summary(rule_file_name, label_file, fw, top_k=20):
+    # summary 系列文件最终写出的不是“按行记录”，而是单个 JSON 对象：
+    # {
+    #   "organization": ["rule_a", "rule_b", ...],
+    #   "person": ["rule_c", ...],
+    #   "location": ["rule_d", ...]
+    # }
+    # value 中只保留规则文本本身，不保留频次；频次仅用于内部排序选出 top_k。
     # result_dict 先按标签文件初始化实体类型，再统计每种规则出现的频次。
     result_dict = {}
     with open(label_file, 'r', encoding='utf8') as f:
@@ -390,6 +420,63 @@ def valied_rules(fr, fw, batch_size, valid_prompt, tokenizer, llm, sampling_para
             
             
         
+
+
+def summary(rule_file_name, label_file, fw, top_k=20):
+    # Override the earlier implementation and emit triples:
+    # [entity_type, rule_text, support_examples]
+    result_dict = {}
+    with open(label_file, 'r', encoding='utf8') as f:
+        labels_dict = json.loads(f.readlines()[0])
+        for k in labels_dict:
+            if "geo" in k:
+                k = "geo-political entity"
+            result_dict[k] = {}
+
+    with open(rule_file_name, 'r', encoding='utf8') as f:
+        for line in f:
+            line_json = json.loads(line)
+            if "orignal_rules" not in line_json or "label" not in line_json or "predict_labels" not in line_json:
+                continue
+
+            rules = line_json["orignal_rules"]
+            labels = line_json["label"]
+            predict_labels = line_json["predict_labels"]
+            if not isinstance(rules, dict):
+                continue
+
+            normalized_predict_labels = {
+                (label[0], "geo-political entity" if "geo" in label[-1] else label[-1])
+                for label in predict_labels
+            }
+
+            for label, rule in correspondings(labels, rules):
+                entity_text = label[0]
+                entity_type = "geo-political entity" if "geo" in label[-1] else label[-1]
+                if (entity_text, entity_type) not in normalized_predict_labels:
+                    continue
+
+                if rule not in result_dict[entity_type]:
+                    result_dict[entity_type][rule] = {"count": 0, "support_examples": []}
+
+                result_dict[entity_type][rule]["count"] += 1
+                if entity_text not in result_dict[entity_type][rule]["support_examples"]:
+                    result_dict[entity_type][rule]["support_examples"].append(entity_text)
+
+    summary_rules = []
+    for entity_type in result_dict:
+        tmp_list = sorted(
+            result_dict[entity_type].items(),
+            key=lambda x: x[-1]["count"],
+            reverse=True
+        )
+        for j, (rule_text, rule_info) in enumerate(tmp_list):
+            if j >= top_k:
+                break
+            summary_rules.append([entity_type, rule_text, rule_info["support_examples"]])
+
+    fw.write(json.dumps(summary_rules, ensure_ascii=False))
+    fw.close()
 
 
 def main():

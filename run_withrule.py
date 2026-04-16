@@ -47,12 +47,24 @@ def get_summary_rule(summary_rules_file):
     final_rule = ""
     with open(summary_rules_file, 'r', encoding='utf8') as f:
         rule_summary = json.loads(f.readlines()[0])
-        for k,v in rule_summary.items():
-            final_rule += k.capitalize() + ": "
-            final_rule += str(v)
-            final_rule += "\n"
+
+    if isinstance(rule_summary, dict):
+        grouped_rules = rule_summary
+    else:
+        grouped_rules = {}
+        for item in rule_summary:
+            if not isinstance(item, list) or len(item) != 3:
+                continue
+            entity_type, rule_text, _ = item
+            if entity_type not in grouped_rules:
+                grouped_rules[entity_type] = []
+            grouped_rules[entity_type].append(rule_text)
+
+    for k, v in grouped_rules.items():
+        final_rule += k.capitalize() + ": "
+        final_rule += str(v)
+        final_rule += "\n"
     return final_rule
-        
 
 
 def predict_batch(outputs, tokenizer, fw, texts, labels):
