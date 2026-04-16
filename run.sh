@@ -13,7 +13,7 @@ DATASET_NAME="${DATASET_NAME:-conll2003}"
 TEMPERATURE="${TEMPERATURE:-0}"
 TOP_P="${TOP_P:-1}"
 
-export CUDA_VISIBLE_DEVICES=0
+export CUDA_VISIBLE_DEVICES=0,1
 
 python rule_summary.py \
   --dataset_name "$DATASET_NAME" \
