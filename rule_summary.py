@@ -424,7 +424,7 @@ def valied_rules(fr, fw, batch_size, valid_prompt, tokenizer, llm, sampling_para
             messages.append(message)
             rules_list.append(rules)
            
-            outputs = llm.generate(messages, sampling_params)
+            outputs = llm.generate(messages, sampling_params, use_tqdm=False)
             valid_batch(outputs, tokenizer, fw, texts, labels, rules_list)
             messages = []
             texts = []
@@ -436,7 +436,7 @@ def valied_rules(fr, fw, batch_size, valid_prompt, tokenizer, llm, sampling_para
     
     # 别遗漏最后一个不足 batch_size 的尾批次。
     if len(messages) > 0:
-        outputs = llm.generate(messages, sampling_params)
+        outputs = llm.generate(messages, sampling_params, use_tqdm=False)
         valid_batch(outputs, tokenizer, fw, texts, labels, rules_list)
     
     fw.close()
@@ -559,10 +559,12 @@ def main():
         unit="step",
         file=sys.stdout,
         dynamic_ncols=True,
+        position=0,
+        leave=True,
     )
     
     # 第一步：遍历训练集，为每条样本生成候选规则。
-    with open(os.path.join(dataset_path, "train.jsonl"), "r", encoding='utf8') as f:
+    with open(train_file, "r", encoding='utf8') as f:
         for i, line in enumerate(f):
             line_json = json.loads(line)
             
@@ -586,7 +588,7 @@ def main():
                 labels.append(entity_labels)
                 messages.append(message)
                 
-                outputs = llm.generate(messages, sampling_params)
+                outputs = llm.generate(messages, sampling_params, use_tqdm=False)
                 
                 predict_batch(outputs, tokenizer, fw, texts, labels)
                 
@@ -597,7 +599,7 @@ def main():
             overall_progress.update(1)
         
         if len(messages) > 0:
-            outputs = llm.generate(messages, sampling_params)
+            outputs = llm.generate(messages, sampling_params, use_tqdm=False)
             predict_batch(outputs, tokenizer, fw, texts, labels)
         
         fw.close()
