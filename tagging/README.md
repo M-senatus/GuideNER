@@ -33,7 +33,7 @@ The pipeline also supports JSONL input where each record contains:
 From the repository root:
 
 ```bash
-python tagging/scripts/train_ner.py --config tagging/configs/deberta_ner_conll2003.json
+bash tagging/run.sh train
 ```
 
 Artifacts are written under:
@@ -45,19 +45,13 @@ Artifacts are written under:
 ## Run Evaluation
 
 ```bash
-python tagging/scripts/eval_ner.py \
-  --config tagging/configs/deberta_ner_conll2003.json \
-  --checkpoint-path tagging/outputs/deberta_ner_conll2003/checkpoint-best \
-  --split test
+bash tagging/run.sh eval
 ```
 
 ## Run Prediction
 
 ```bash
-python tagging/scripts/predict_ner.py \
-  --config tagging/configs/deberta_ner_conll2003.json \
-  --checkpoint-path tagging/outputs/deberta_ner_conll2003/checkpoint-best \
-  --split test
+bash tagging/run.sh predict
 ```
 
 ## Export Hidden States
@@ -65,21 +59,13 @@ python tagging/scripts/predict_ner.py \
 Word-level export:
 
 ```bash
-python tagging/scripts/export_vectors.py \
-  --config tagging/configs/deberta_ner_conll2003.json \
-  --checkpoint-path tagging/outputs/deberta_ner_conll2003/checkpoint-best \
-  --split test \
-  --vector-type word
+bash tagging/run.sh export word
 ```
 
 Span-level export with gold entity spans:
 
 ```bash
-python tagging/scripts/export_vectors.py \
-  --config tagging/configs/deberta_ner_conll2003.json \
-  --checkpoint-path tagging/outputs/deberta_ner_conll2003/checkpoint-best \
-  --split test \
-  --vector-type span
+bash tagging/run.sh export span
 ```
 
 ## Minimal Smoke-Test Example
@@ -92,6 +78,10 @@ For a quick smoke test, you can temporarily set small sample caps in the config:
 - `export.max_samples`
 
 This keeps the pipeline cheap to debug before full training.
+
+```bash
+bash tagging/run.sh smoke
+```
 
 ## Retrieval Interface Notes
 
@@ -113,3 +103,13 @@ The export step writes:
 - `entity_type`
 - `source_path`
 - `checkpoint_path`
+
+## Useful Overrides
+
+You can override common settings with environment variables:
+
+```bash
+SPLIT=validation bash tagging/run.sh eval
+CHECKPOINT_PATH=tagging/outputs/deberta_ner_conll2003/checkpoint-best bash tagging/run.sh export span
+PYTHON_BIN=python bash tagging/run.sh train
+```
