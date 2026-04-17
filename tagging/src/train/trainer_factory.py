@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 from pathlib import Path
 from typing import Any
 
@@ -18,7 +19,8 @@ def create_training_arguments(config: dict[str, Any]) -> TrainingArguments:
     checkpoint_dir = ensure_dir(output_root / "checkpoints")
     ensure_dir(output_root / "logs")
 
-    return TrainingArguments(
+    signature = inspect.signature(TrainingArguments.__init__)
+    kwargs: dict[str, Any] = dict(
         output_dir=str(checkpoint_dir),
         logging_dir=str(output_root / "logs"),
         overwrite_output_dir=bool(training_cfg.get("overwrite_output_dir", False)),
@@ -30,7 +32,6 @@ def create_training_arguments(config: dict[str, Any]) -> TrainingArguments:
         weight_decay=float(training_cfg.get("weight_decay", 0.0)),
         warmup_ratio=float(training_cfg.get("warmup_ratio", 0.0)),
         logging_steps=int(training_cfg.get("logging_steps", 50)),
-        evaluation_strategy=str(training_cfg.get("evaluation_strategy", "epoch")),
         save_strategy=str(training_cfg.get("save_strategy", "epoch")),
         save_total_limit=int(training_cfg.get("save_total_limit", 2)),
         load_best_model_at_end=bool(training_cfg.get("load_best_model_at_end", True)),
@@ -41,6 +42,19 @@ def create_training_arguments(config: dict[str, Any]) -> TrainingArguments:
         seed=int(experiment_cfg["seed"]),
         data_seed=int(experiment_cfg["seed"]),
     )
+
+    eval_strategy_value = str(training_cfg.get("evaluation_strategy", "epoch"))
+    if "evaluation_strategy" in signature.parameters:
+        kwargs["evaluation_strategy"] = eval_strategy_value
+    elif "eval_strategy" in signature.parameters:
+        kwargs["eval_strategy"] = eval_strategy_value
+    else:
+        raise TypeError(
+            "This transformers version does not expose either 'evaluation_strategy' or 'eval_strategy' "
+            "in TrainingArguments."
+        )
+
+    return TrainingArguments(**kwargs)
 
 
 def create_trainer(
