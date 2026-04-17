@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from os import sep
 from pathlib import Path
 from typing import Any
 
@@ -27,6 +28,18 @@ PATH_FIELDS = {
     ("training", "output_dir"),
     ("export", "output_dir"),
 }
+
+
+def _looks_like_local_model_path(raw_value: str) -> bool:
+    """Heuristically decide whether model.name_or_path should be treated as a local path."""
+    return (
+        raw_value.startswith(".")
+        or raw_value.startswith("~")
+        or Path(raw_value).is_absolute()
+        or "\\" in raw_value
+        or raw_value.startswith(f"..{sep}")
+        or raw_value.startswith(f".{sep}")
+    )
 
 
 def _set_nested(config: dict[str, Any], dotted_key: str, value: Any) -> None:
@@ -60,6 +73,13 @@ def _resolve_known_paths(config: dict[str, Any], tagging_root: Path) -> dict[str
         if not path_value.is_absolute():
             path_value = (tagging_root / path_value).resolve()
         resolved[section][key] = str(path_value)
+
+    model_name_or_path = resolved["model"]["name_or_path"]
+    if isinstance(model_name_or_path, str) and _looks_like_local_model_path(model_name_or_path):
+        model_path = Path(model_name_or_path).expanduser()
+        if not model_path.is_absolute():
+            model_path = (tagging_root / model_path).resolve()
+        resolved["model"]["name_or_path"] = str(model_path)
     return resolved
 
 
