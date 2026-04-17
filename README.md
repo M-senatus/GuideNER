@@ -97,6 +97,8 @@ CUDA_VISIBLE_DEVICES=0 python run_withrule.py \
   --prototype_dir prototypes/Llama-3.1-8B-Instruct-conll2003-prototypes
 ```
 
+By default, `run_withrule.py` starts vLLM in eager mode with `--vllm_max_model_len 8192` to avoid Triton compile failures on some CUDA environments. Override these defaults only if your local stack is known to support the compiled path.
+
 Main output:
 
 - `datasets/conll2003/Llama-3.1-8B-Instruct_withrule_retrieval_result_detail.jsonl`

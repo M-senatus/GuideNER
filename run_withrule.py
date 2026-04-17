@@ -194,7 +194,13 @@ def main():
     )
 
     llm_tokenizer = AutoTokenizer.from_pretrained(model_path)
-    llm = LLM(model=model_path)
+    # Default to eager mode because newer vLLM / PyTorch / Triton stacks can
+    # fail during compile-time kernel generation on some CUDA environments.
+    llm = LLM(
+        model=model_path,
+        enforce_eager=True,
+        max_model_len=8192,
+    )
     sampling_params = SamplingParams(
         temperature=args.temperature,
         top_p=args.top_p,
