@@ -73,6 +73,51 @@ Span-level export with gold entity spans:
 bash tagging/run.sh export span
 ```
 
+## Build Guideline Prototypes
+
+This is the offline stage. It:
+
+1. reads guideline JSON with entity types, rule text, and entity instances
+2. encodes each entity instance with the fine-tuned DeBERTa checkpoint
+3. pools instance vectors into one prototype per rule
+4. saves prototype vectors plus metadata
+
+Example:
+
+```bash
+bash tagging/run.sh guideline-build \
+  --guideline-path datasets/conll2003/Qwen2.5-7B-Instruct_summaryrules.json
+```
+
+Outputs are written under `.../guideline_retrieval/prototypes/` with:
+
+- `vectors.npy`
+- `metadata.jsonl`
+- `summary.json`
+- `build_summary.json`
+
+## Retrieve Guideline Prototypes
+
+This is the inference stage. It:
+
+1. loads saved prototype vectors and metadata
+2. encodes each token in the query split at the word level
+3. retrieves top-k guideline prototypes for every token
+
+Example:
+
+```bash
+bash tagging/run.sh guideline-retrieve \
+  --prototype-dir ../../model/deberta-v3-base/deberta_ner_conll2003/guideline_retrieval/prototypes \
+  --top-k 5
+```
+
+Outputs are written under `.../guideline_retrieval/retrieval/<split>/` with:
+
+- `results.jsonl`
+- `summary.json`
+- `retrieve_summary.json`
+
 ## Minimal Smoke-Test Example
 
 For a quick smoke test, you can temporarily set small sample caps in the config:

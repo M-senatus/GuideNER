@@ -1,27 +1,43 @@
 import argparse
-import re
-import os
+import ast
 import json
-import logging
+import os
+import re
+import sys
+from pathlib import Path
+
 from tqdm import tqdm
 from vllm import LLM, SamplingParams
 from transformers import AutoTokenizer
+
 from EasyChatTemplating.util_tools import convert_userprompt_transformers, skip_special_tokens_transformers
 
-result_pattern = r'\{.*\}'
-label_pattern = r'\[\[(.*?)\]\]'
+
+TAGGING_ROOT = Path(__file__).resolve().parent / "tagging"
+if str(TAGGING_ROOT) not in sys.path:
+    sys.path.insert(0, str(TAGGING_ROOT))
+
+from src.infer.guideline_retrieval import load_query_examples, load_saved_prototypes, retrieve_guideline_records
+from src.models.deberta_token_classifier import load_checkpoint_model, load_tokenizer as load_ner_tokenizer
+from src.utils.config import load_config
+
+
+label_pattern = r"\[\[(.*?)\]\]"
 MODEL_ROOT = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "model"))
 DEFAULT_MODEL_NAME = "Llama-3.1-8B-Instruct"
+DEFAULT_TAGGING_CONFIG = os.path.join("tagging", "configs", "deberta_ner_conll2003.json")
 model_path_dict = {
     "bge-m3": os.path.join(MODEL_ROOT, "bge-m3"),
     "Llama-3.1-8B-Instruct": os.path.join(MODEL_ROOT, "Llama-3.1-8B-Instruct"),
     "Ministral-3-8B-Instruct-2512": os.path.join(MODEL_ROOT, "Ministral-3-8B-Instruct-2512"),
     "Qwen2.5-7B-Instruct": os.path.join(MODEL_ROOT, "Qwen2.5-7B-Instruct"),
 }
-dataset_path_dict = {"conll2003": "./datasets/conll2003",
-                     "ace04": "./datasets/ace04",
-                     "ace05": "./datasets/ace05",
-                     "genia": "./datasets/genia"}
+dataset_path_dict = {
+    "conll2003": "./datasets/conll2003",
+    "ace04": "./datasets/ace04",
+    "ace05": "./datasets/ace05",
+    "genia": "./datasets/genia",
+}
 
 
 conll2003_rule_prompt = """Task: Please identify Person, Organization, Location and Miscellaneous Entity from the given text and rules. 
@@ -49,142 +65,231 @@ The Output is:
 """
 
 
-def get_summary_rule(summary_rules_file):
-    rule_summary = None
-    final_rule = ""
-    with open(summary_rules_file, 'r', encoding='utf8') as f:
-        rule_summary = json.loads(f.readlines()[0])
+def _normalize_text_token(token_text: str) -> str:
+    """Normalize a matched token for concise prompt display."""
+    return token_text.strip()
 
-    if isinstance(rule_summary, dict):
-        grouped_rules = {}
-        for entity_type, rules in rule_summary.items():
-            if not isinstance(rules, dict):
+
+def build_sentence_guideline_summary(token_retrievals: list[dict], max_guidelines: int | None = None) -> list[dict]:
+    """Merge token-level top-k retrievals into a sentence-level guideline summary."""
+    merged: dict[tuple[str, str], dict] = {}
+    for token_record in token_retrievals:
+        token_text = _normalize_text_token(token_record["token_text"])
+        for hit in token_record["top_k"]:
+            key = (str(hit["entity_type"]).lower(), str(hit["rule_text"]))
+            entry = merged.setdefault(
+                key,
+                {
+                    "entity_type": str(hit["entity_type"]).lower(),
+                    "rule_text": str(hit["rule_text"]),
+                    "best_score": float(hit["score"]),
+                    "support_examples": list(hit.get("support_examples", [])),
+                    "matched_tokens": [],
+                },
+            )
+            entry["best_score"] = max(entry["best_score"], float(hit["score"]))
+            if token_text and token_text not in entry["matched_tokens"]:
+                entry["matched_tokens"].append(token_text)
+
+    summary = sorted(merged.values(), key=lambda item: item["best_score"], reverse=True)
+    if max_guidelines is not None:
+        summary = summary[: max(0, int(max_guidelines))]
+    return summary
+
+
+def format_guidelines_for_prompt(guideline_summary: list[dict]) -> str:
+    """Render merged retrieved guidelines in the original category -> rule list format."""
+    if not guideline_summary:
+        return ""
+
+    grouped_rules: dict[str, list[str]] = {}
+    for item in guideline_summary:
+        entity_type = item["entity_type"]
+        grouped_rules.setdefault(entity_type, [])
+        if item["rule_text"] not in grouped_rules[entity_type]:
+            grouped_rules[entity_type].append(item["rule_text"])
+
+    lines = []
+    for entity_type, rules in grouped_rules.items():
+        lines.append(f"{entity_type.capitalize()}: {rules}")
+    return "\n".join(lines)
+
+
+def parse_prediction(text: str) -> tuple[str, list]:
+    """Parse a model prediction into status plus structured labels."""
+    result = re.search(label_pattern, text, re.DOTALL)
+    if result is None:
+        return "none_wrong", []
+
+    try:
+        parsed = ast.literal_eval(result.group())
+    except (SyntaxError, ValueError):
+        return "eval_wrong", []
+
+    if not isinstance(parsed, list):
+        return "eval_wrong", []
+    return "success", parsed
+
+
+def predict_batch(outputs, tokenizer, fw, batch_records):
+    """Write one batch of final LLM predictions with retrieval metadata."""
+    for output, record in zip(outputs, batch_records):
+        generated_text = skip_special_tokens_transformers(tokenizer, output.outputs[0].text)
+        status, predicted_labels = parse_prediction(generated_text)
+
+        result_dict = {
+            "sample_id": record["sample_id"],
+            "text": record["text"],
+            "labels": record["labels"],
+            "status": status,
+            "predicted_labels": predicted_labels,
+            "prompt": record["prompt"],
+            "retrieved_guideline_summary": record["retrieved_guideline_summary"],
+            "token_guideline_retrievals": record["token_guideline_retrievals"],
+            "llm_raw_output": generated_text,
+        }
+
+        fw.write(json.dumps(result_dict, ensure_ascii=False))
+        fw.write("\n")
+        fw.flush()
+
+
+def load_test_records(test_file: str) -> list[dict]:
+    """Read test.jsonl into a list of dictionaries."""
+    records = []
+    with open(test_file, "r", encoding="utf8") as f:
+        for idx, line in enumerate(f):
+            stripped = line.strip()
+            if not stripped:
                 continue
-            grouped_rules[entity_type] = list(rules.keys())
-    else:
-        grouped_rules = {}
-        for item in rule_summary:
-            if not isinstance(item, list) or len(item) != 3:
-                continue
-            entity_type, rule_text, _ = item
-            if entity_type not in grouped_rules:
-                grouped_rules[entity_type] = []
-            grouped_rules[entity_type].append(rule_text)
-
-    for k, v in grouped_rules.items():
-        final_rule += k.capitalize() + ": "
-        final_rule += str(v)
-        final_rule += "\n"
-    return final_rule
+            record = json.loads(stripped)
+            record["sample_id"] = str(record.get("sample_id", f"test-{idx}"))
+            records.append(record)
+    return records
 
 
-def predict_batch(outputs, tokenizer, fw, texts, labels):
-    for j, output in enumerate(outputs):
-        clean_text = skip_special_tokens_transformers(tokenizer, output.outputs[0].text)
-        result = re.search(label_pattern, clean_text, re.DOTALL)
-        
-        result_dict = {}
-        result_dict["text"] = texts[j]
-        result_dict["labels"] = labels[j]
-        
-        # If llm generate the right result
-        if result is not None:
-            try:
-                result = eval(result.group())
-                result_dict["status"] = "success"
-                result_dict["predicted_labels"] = result
-            except:
-                result_dict["status"] = "eval_wrong"
-                result_dict["predicted_labels"] = []
-        # if llm generate the wrong result or generate nothing
-        else:
-            result_dict["status"] = "none_wrong"
-            result_dict["predicted_labels"] = []
-        try:
-            fw.write(json.dumps(result_dict))
-            fw.write("\n")
-            fw.flush()
-        except:
-            result_dict["status"] = "write_wrong"
-            result_dict["predicted_labels"] = []
-            fw.write(json.dumps(result_dict))
-            fw.write("\n")
-            fw.flush()
-
+def parse_args():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--dataset_name", default="conll2003", choices=["conll2003", "ace04", "ace05", "genia"])
+    parser.add_argument("--model_name", default=DEFAULT_MODEL_NAME, choices=list(model_path_dict.keys()))
+    parser.add_argument("--temperature", default=0.8, type=float)
+    parser.add_argument("--top_p", default=0.95, type=float)
+    parser.add_argument("--max_tokens", default=256, type=int)
+    parser.add_argument("--batch_size", default=32, type=int)
+    parser.add_argument("--retrieval_top_k", default=3, type=int)
+    parser.add_argument("--max_prompt_guidelines", default=24, type=int)
+    parser.add_argument("--tagging_config", default=DEFAULT_TAGGING_CONFIG)
+    parser.add_argument("--ner_checkpoint_path", default=None)
+    parser.add_argument("--prototype_dir", default=None)
+    parser.add_argument("--result_file", default=None)
+    parser.add_argument("--append", action="store_true")
+    return parser.parse_args()
 
 
 def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--dataset_name',
-                        default='conll2003',
-                        choices=["conll2003", "ace04", "ace05", "genia"])
-    parser.add_argument('--model_name',
-                        default=DEFAULT_MODEL_NAME,
-                        choices=list(model_path_dict.keys()))
-    parser.add_argument('--temperature',
-                        default=0.8,
-                        type=float),
-    parser.add_argument('--top_p',
-                        default=0.95,
-                        type=float),
-    batch_size = 32
-    args = parser.parse_args()
-    
+    args = parse_args()
     model_path = model_path_dict[args.model_name]
     dataset_path = dataset_path_dict[args.dataset_name]
-    
-    tokenizer = AutoTokenizer.from_pretrained(model_path)
+    test_file = os.path.join(dataset_path, "test.jsonl")
+
+    tagging_config = load_config(args.tagging_config)
+    ner_checkpoint_path = (
+        str(Path(args.ner_checkpoint_path).resolve())
+        if args.ner_checkpoint_path
+        else str((Path(tagging_config["training"]["output_dir"]) / "checkpoint-best").resolve())
+    )
+    prototype_dir = (
+        str(Path(args.prototype_dir).resolve())
+        if args.prototype_dir
+        else str((Path(tagging_config["training"]["output_dir"]) / "guideline_retrieval" / "prototypes").resolve())
+    )
+
+    llm_tokenizer = AutoTokenizer.from_pretrained(model_path)
     llm = LLM(model=model_path)
-    sampling_params = SamplingParams(temperature=args.temperature, top_p=args.top_p, max_tokens=256)
-    
-    reuslt_file_name = os.path.join(dataset_path, f"{args.model_name}_withrule_result_detail.txt")
-    fw = open(reuslt_file_name, "a", encoding='utf8')
-    
-    messages = []
-    texts = []
-    labels = []
-    
+    sampling_params = SamplingParams(
+        temperature=args.temperature,
+        top_p=args.top_p,
+        max_tokens=args.max_tokens,
+    )
+
+    ner_tokenizer = load_ner_tokenizer(ner_checkpoint_path)
+    ner_model = load_checkpoint_model(ner_checkpoint_path, output_hidden_states=True)
+    prototype_vectors, prototype_metadata, _ = load_saved_prototypes(prototype_dir)
+    query_examples = load_query_examples(
+        tagging_config,
+        split="test",
+        input_path=test_file,
+        max_samples=None,
+    )
+    retrieval_records, _ = retrieve_guideline_records(
+        model=ner_model,
+        tokenizer=ner_tokenizer,
+        query_examples=query_examples,
+        prototype_vectors=prototype_vectors,
+        prototype_metadata=prototype_metadata,
+        batch_size=int(tagging_config["inference"]["batch_size"]),
+        max_length=int(tagging_config["model"]["max_length"]),
+        hidden_state_layer=int(tagging_config["export"]["hidden_state_layer"]),
+        top_k=int(args.retrieval_top_k),
+        checkpoint_path=ner_checkpoint_path,
+    )
+
+    test_records = load_test_records(test_file)
+    if len(test_records) != len(retrieval_records):
+        raise ValueError(
+            f"Test sample count {len(test_records)} does not match retrieval record count {len(retrieval_records)}."
+        )
+
+    result_file_name = (
+        args.result_file
+        if args.result_file
+        else os.path.join(dataset_path, f"{args.model_name}_withrule_retrieval_result_detail.jsonl")
+    )
+    file_mode = "a" if args.append else "w"
+    fw = open(result_file_name, file_mode, encoding="utf8")
+
     task_prompt = eval(f"{args.dataset_name}_rule_prompt")
-    
-    summary_rules_file = os.path.join(dataset_path, f"{args.model_name}_summaryrules.json")
-    summary_rule = get_summary_rule(summary_rules_file)
-        
-    
-    
-    with open(os.path.join(dataset_path, "test.jsonl"), "r", encoding='utf8') as f:
-        for i, line in tqdm(enumerate(f)):
-            line_json = json.loads(line)
+    messages = []
+    batch_records = []
 
-            text = line_json["text"]
-            entity_labels = line_json["entity_labels"]
-            
+    for test_record, retrieval_record in tqdm(
+        list(zip(test_records, retrieval_records)),
+        desc="Retrieval + LLM inference",
+    ):
+        text = test_record["text"]
+        entity_labels = test_record["entity_labels"]
+        guideline_summary = build_sentence_guideline_summary(
+            retrieval_record["token_retrievals"],
+            max_guidelines=args.max_prompt_guidelines,
+        )
+        prompt_guidelines = format_guidelines_for_prompt(guideline_summary)
+        prompt_predict = task_prompt.format(Rules=prompt_guidelines, input_text=text)
+        message = convert_userprompt_transformers(llm_tokenizer, prompt_predict, add_generation_prompt=True)
 
-            prompt_predict = task_prompt.format(Rules=summary_rule,
-                                                input_text=text)
-            message = convert_userprompt_transformers(tokenizer, prompt_predict, add_generation_prompt=True)
-            
-            if len(messages) < batch_size - 1:
-                texts.append(text)
-                labels.append(entity_labels)
-                messages.append(message)
-            else:
-                texts.append(text)
-                labels.append(entity_labels)
-                messages.append(message)
-                
-                outputs = llm.generate(messages, sampling_params)
-                
-                predict_batch(outputs, tokenizer, fw, texts, labels)
-                
-                messages = []
-                texts = []
-                labels = []
-        
-        if len(messages) > 0:
+        batch_records.append(
+            {
+                "sample_id": test_record["sample_id"],
+                "text": text,
+                "labels": entity_labels,
+                "prompt": prompt_predict,
+                "retrieved_guideline_summary": guideline_summary,
+                "token_guideline_retrievals": retrieval_record["token_retrievals"],
+            }
+        )
+        messages.append(message)
+
+        if len(messages) >= args.batch_size:
             outputs = llm.generate(messages, sampling_params)
-            predict_batch(outputs, tokenizer, fw, texts, labels)
-        
-  
-    
+            predict_batch(outputs, llm_tokenizer, fw, batch_records)
+            messages = []
+            batch_records = []
+
+    if messages:
+        outputs = llm.generate(messages, sampling_params)
+        predict_batch(outputs, llm_tokenizer, fw, batch_records)
+
+    fw.close()
+
+
 if __name__ == "__main__":
     main()

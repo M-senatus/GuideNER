@@ -20,6 +20,8 @@ Usage:
   bash tagging/run.sh eval [extra args...]
   bash tagging/run.sh predict [extra args...]
   bash tagging/run.sh export [token|word|span] [extra args...]
+  bash tagging/run.sh guideline-build --guideline-path PATH [extra args...]
+  bash tagging/run.sh guideline-retrieve --prototype-dir PATH [extra args...]
   bash tagging/run.sh smoke
 
 Environment overrides:
@@ -35,6 +37,8 @@ Examples:
   bash tagging/run.sh eval
   bash tagging/run.sh predict
   bash tagging/run.sh export word
+  bash tagging/run.sh guideline-build --guideline-path datasets/conll2003/Qwen2.5-7B-Instruct_summaryrules.json
+  bash tagging/run.sh guideline-retrieve --prototype-dir ../../model/deberta-v3-base/deberta_ner_conll2003/guideline_retrieval/prototypes
   SPLIT=validation bash tagging/run.sh eval
   CHECKPOINT_PATH="$TAGGING_DIR/../../model/deberta-v3-base/deberta_ner_conll2003/checkpoint-best" bash tagging/run.sh export span
   bash tagging/run.sh smoke
@@ -100,6 +104,23 @@ case "$COMMAND" in
     fi
 
     "${CMD[@]}" "$@"
+    ;;
+
+  guideline-build)
+    export PYTHONUNBUFFERED=1
+    "$PYTHON_BIN" "$TAGGING_DIR/scripts/build_guideline_prototypes.py" \
+      --config "$CONFIG_PATH" \
+      --checkpoint-path "$CHECKPOINT_PATH" \
+      "$@"
+    ;;
+
+  guideline-retrieve)
+    export PYTHONUNBUFFERED=1
+    "$PYTHON_BIN" "$TAGGING_DIR/scripts/retrieve_guideline.py" \
+      --config "$CONFIG_PATH" \
+      --checkpoint-path "$CHECKPOINT_PATH" \
+      --split "$SPLIT" \
+      "$@"
     ;;
 
   smoke)
