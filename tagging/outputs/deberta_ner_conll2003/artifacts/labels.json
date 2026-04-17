@@ -1,0 +1,13 @@
+{
+  "labels": [
+    "O",
+    "B-LOC",
+    "I-LOC",
+    "B-MISC",
+    "I-MISC",
+    "B-ORG",
+    "I-ORG",
+    "B-PER",
+    "I-PER"
+  ]
+}
