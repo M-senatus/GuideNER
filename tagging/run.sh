@@ -21,7 +21,7 @@ Usage:
   bash tagging/run.sh predict [extra args...]
   bash tagging/run.sh export [token|word|span] [extra args...]
   bash tagging/run.sh guideline-build --guideline-path PATH [extra args...]
-  bash tagging/run.sh guideline-retrieve --prototype-dir PATH [extra args...]
+  bash tagging/run.sh guideline-retrieve [--prototype-dir PATH] [extra args...]
   bash tagging/run.sh smoke
 
 Environment overrides:
@@ -38,7 +38,7 @@ Examples:
   bash tagging/run.sh predict
   bash tagging/run.sh export word
   bash tagging/run.sh guideline-build --guideline-path datasets/conll2003/Qwen2.5-7B-Instruct_summaryrules.json
-  bash tagging/run.sh guideline-retrieve --prototype-dir ../../model/deberta-v3-base/deberta_ner_conll2003/guideline_retrieval/prototypes
+  bash tagging/run.sh guideline-retrieve --prototype-dir ../../prototypes/deberta-v3-base-conll2003-prototypes
   SPLIT=validation bash tagging/run.sh eval
   CHECKPOINT_PATH="$TAGGING_DIR/../../model/deberta-v3-base/deberta_ner_conll2003/checkpoint-best" bash tagging/run.sh export span
   bash tagging/run.sh smoke

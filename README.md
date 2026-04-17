@@ -78,9 +78,9 @@ CUDA_VISIBLE_DEVICES=0 python tagging/scripts/build_guideline_prototypes.py \
 
 Main outputs:
 
-- `../model/deberta-v3-base/deberta_ner_conll2003/guideline_retrieval/prototypes/vectors.npy`
-- `../model/deberta-v3-base/deberta_ner_conll2003/guideline_retrieval/prototypes/metadata.jsonl`
-- `../model/deberta-v3-base/deberta_ner_conll2003/guideline_retrieval/prototypes/summary.json`
+- `prototypes/deberta-v3-base-conll2003-prototypes/vectors.npy`
+- `prototypes/deberta-v3-base-conll2003-prototypes/metadata.jsonl`
+- `prototypes/deberta-v3-base-conll2003-prototypes/summary.json`
 
 ### 4. Run test-time inference on the test split
 
@@ -92,7 +92,7 @@ CUDA_VISIBLE_DEVICES=0 python run_withrule.py \
   --model_name Llama-3.1-8B-Instruct \
   --tagging_config tagging/configs/deberta_ner_conll2003.json \
   --ner_checkpoint_path ../model/deberta-v3-base/deberta_ner_conll2003/checkpoint-best \
-  --prototype_dir ../model/deberta-v3-base/deberta_ner_conll2003/guideline_retrieval/prototypes
+  --prototype_dir prototypes/deberta-v3-base-conll2003-prototypes
 ```
 
 Main output:

@@ -9,6 +9,7 @@ from ..models.deberta_token_classifier import load_checkpoint_model, load_tokeni
 from ..utils.config import load_config
 from ..utils.io import write_json
 from .guideline_retrieval import build_guideline_prototypes, load_guideline_specs
+from .prototype_paths import default_prototype_dir_from_config
 
 
 def parse_args() -> argparse.Namespace:
@@ -40,7 +41,7 @@ def main() -> None:
     output_root = (
         Path(args.output_dir).resolve()
         if args.output_dir
-        else Path(config["training"]["output_dir"]).resolve() / "guideline_retrieval" / "prototypes"
+        else default_prototype_dir_from_config(config)
     )
 
     tokenizer = load_tokenizer(checkpoint_path)

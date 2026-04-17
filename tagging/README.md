@@ -89,7 +89,8 @@ bash tagging/run.sh guideline-build \
   --guideline-path datasets/conll2003/Qwen2.5-7B-Instruct_summaryrules.json
 ```
 
-Outputs are written under `.../guideline_retrieval/prototypes/` with:
+By default outputs are written under `../prototypes/{model}-{dataset}-prototypes/`, for example
+`../prototypes/deberta-v3-base-conll2003-prototypes/`, with:
 
 - `vectors.npy`
 - `metadata.jsonl`
@@ -108,7 +109,7 @@ Example:
 
 ```bash
 bash tagging/run.sh guideline-retrieve \
-  --prototype-dir ../../model/deberta-v3-base/deberta_ner_conll2003/guideline_retrieval/prototypes \
+  --prototype-dir ../../prototypes/deberta-v3-base-conll2003-prototypes \
   --top-k 5
 ```
 

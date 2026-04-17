@@ -10,6 +10,7 @@ from ..utils.config import load_config
 from ..utils.io import write_json
 from ..data.split_guard import normalize_split
 from .guideline_retrieval import load_query_examples, load_saved_prototypes, retrieve_guideline_prototypes
+from .prototype_paths import default_prototype_dir_from_config
 
 
 def parse_args() -> argparse.Namespace:
@@ -17,7 +18,11 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Load saved guideline prototypes and retrieve them for each token.")
     parser.add_argument("--config", required=True, help="Path to the JSON config file.")
     parser.add_argument("--checkpoint-path", required=True, help="Fine-tuned checkpoint directory.")
-    parser.add_argument("--prototype-dir", required=True, help="Directory that contains saved prototype files.")
+    parser.add_argument(
+        "--prototype-dir",
+        default=None,
+        help="Directory that contains saved prototype files. Defaults to GuideNER/prototypes/{model}-{dataset}-prototypes.",
+    )
     parser.add_argument("--split", default="test", help="Named query split: train/validation/test.")
     parser.add_argument("--input-path", default=None, help="Optional explicit query file path.")
     parser.add_argument("--stage", default=None, help="Execution stage: train/dev. Test retrieval export is forbidden.")
@@ -58,7 +63,9 @@ def main() -> None:
         )
 
     checkpoint_path = str(Path(args.checkpoint_path).resolve())
-    prototype_dir = str(Path(args.prototype_dir).resolve())
+    prototype_dir = str(
+        Path(args.prototype_dir).resolve() if args.prototype_dir else default_prototype_dir_from_config(config)
+    )
     tokenizer = load_tokenizer(checkpoint_path)
     model = load_checkpoint_model(checkpoint_path, output_hidden_states=True)
     query_examples = load_query_examples(
