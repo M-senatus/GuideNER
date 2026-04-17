@@ -23,7 +23,7 @@ from EasyChatTemplating.util_tools import convert_userprompt_transformers, skip_
 运行后会在对应数据集目录下追加写出三个文件：
 1. <model_name>_rules.txt：训练集样本对应的原始候选规则；
 2. <model_name>_validrules.txt：回代验证后区分 right/wrong 的规则；
-3. <model_name>_summaryrules.txt：最终汇总后的类别规则摘要。
+3. <model_name>_summaryrules.json：最终汇总后的类别规则摘要。
 
 注意：脚本使用追加模式 "a" 写文件，重复运行会把新结果继续追加到旧文件后面。
 如果你希望得到一次全新的实验结果，通常需要先手动清理旧结果文件。
@@ -423,8 +423,12 @@ def valied_rules(fr, fw, batch_size, valid_prompt, tokenizer, llm, sampling_para
 
 
 def summary(rule_file_name, label_file, fw, top_k=20, progress_bar=None):
-    # Override the earlier implementation and emit triples:
-    # [entity_type, rule_text, support_examples]
+    # Emit nested JSON:
+    # {
+    #   "entity_type": {
+    #     "rule_text": ["example_a", "example_b"]
+    #   }
+    # }
     result_dict = {}
     with open(label_file, 'r', encoding='utf8') as f:
         labels_dict = json.loads(f.readlines()[0])
@@ -465,8 +469,9 @@ def summary(rule_file_name, label_file, fw, top_k=20, progress_bar=None):
                 if entity_text not in result_dict[entity_type][rule]["support_examples"]:
                     result_dict[entity_type][rule]["support_examples"].append(entity_text)
 
-    summary_rules = []
+    summary_rules = {}
     for entity_type in result_dict:
+        summary_rules[entity_type] = {}
         tmp_list = sorted(
             result_dict[entity_type].items(),
             key=lambda x: x[-1]["count"],
@@ -475,9 +480,10 @@ def summary(rule_file_name, label_file, fw, top_k=20, progress_bar=None):
         for j, (rule_text, rule_info) in enumerate(tmp_list):
             if j >= top_k:
                 break
-            summary_rules.append([entity_type, rule_text, rule_info["support_examples"]])
+            summary_rules[entity_type][rule_text] = rule_info["support_examples"]
 
-    fw.write(json.dumps(summary_rules, ensure_ascii=False))
+    fw.write(json.dumps(summary_rules, ensure_ascii=False, indent=2))
+    fw.write("\n")
     fw.close()
 
 
@@ -516,11 +522,11 @@ def main():
     # 三类输出文件：
     # 1. rules.txt：原始候选规则；
     # 2. validrules.txt：验证后的规则；
-    # 3. summaryrules.txt：最终供推理使用的摘要规则。
+    # 3. summaryrules.json：最终供推理使用的摘要规则。
     rule_file_name = os.path.join(dataset_path, f"{args.model_name}_rules.txt")
     valid_rule_file_name = os.path.join(dataset_path, f"{args.model_name}_validrules.txt")
     label_file = os.path.join(dataset_path, "labels.jsonl")
-    summary_file_name = os.path.join(dataset_path, f"{args.model_name}_summaryrules.txt")
+    summary_file_name = os.path.join(dataset_path, f"{args.model_name}_summaryrules.json")
     fw = open(rule_file_name, "a", encoding='utf8')
     
     messages = []
@@ -589,7 +595,7 @@ def main():
     valied_rules(fr, fw, batch_size, valid_prompt, tokenizer, llm, sampling_params, progress_bar=overall_progress)
     
     # 第三步：从验证通过的规则中统计高频规则，得到最终摘要规则。
-    fw = open(summary_file_name, 'a', encoding='utf8')
+    fw = open(summary_file_name, 'w', encoding='utf8')
     overall_progress.total += count_lines(valid_rule_file_name)
     overall_progress.set_description("Overall progress | summarize rules")
     overall_progress.refresh()

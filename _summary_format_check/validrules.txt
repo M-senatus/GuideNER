@@ -1,0 +1,1 @@
+{"orignal_rules": {"person": ["name"], "organization": ["company"]}, "label": [["Alice", "person"], ["OpenAI", "organization"]], "predict_labels": [["Alice", "person"], ["OpenAI", "organization"]]}

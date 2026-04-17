@@ -1,0 +1,12 @@
+{
+  "person": {
+    "name": [
+      "Alice"
+    ]
+  },
+  "organization": {
+    "company": [
+      "OpenAI"
+    ]
+  }
+}

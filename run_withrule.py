@@ -56,7 +56,11 @@ def get_summary_rule(summary_rules_file):
         rule_summary = json.loads(f.readlines()[0])
 
     if isinstance(rule_summary, dict):
-        grouped_rules = rule_summary
+        grouped_rules = {}
+        for entity_type, rules in rule_summary.items():
+            if not isinstance(rules, dict):
+                continue
+            grouped_rules[entity_type] = list(rules.keys())
     else:
         grouped_rules = {}
         for item in rule_summary:
@@ -142,7 +146,7 @@ def main():
     
     task_prompt = eval(f"{args.dataset_name}_rule_prompt")
     
-    summary_rules_file = os.path.join(dataset_path, f"{args.model_name}_summaryrules.txt")
+    summary_rules_file = os.path.join(dataset_path, f"{args.model_name}_summaryrules.json")
     summary_rule = get_summary_rule(summary_rules_file)
         
     
