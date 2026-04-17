@@ -10,7 +10,7 @@ from ..utils.config import load_config
 from ..utils.io import write_json
 from ..data.split_guard import normalize_split
 from .guideline_retrieval import load_query_examples, load_saved_prototypes, retrieve_guideline_prototypes
-from .prototype_paths import default_prototype_dir_from_config
+from .prototype_paths import prototype_dir_from_model_and_dataset
 
 
 def parse_args() -> argparse.Namespace:
@@ -19,9 +19,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--config", required=True, help="Path to the JSON config file.")
     parser.add_argument("--checkpoint-path", required=True, help="Fine-tuned checkpoint directory.")
     parser.add_argument(
+        "--model-name",
+        default=None,
+        help="LLM model name used to build the prototypes. Required when --prototype-dir is omitted.",
+    )
+    parser.add_argument(
         "--prototype-dir",
         default=None,
-        help="Directory that contains saved prototype files. Defaults to GuideNER/prototypes/{model}-{dataset}-prototypes.",
+        help="Directory that contains saved prototype files. Defaults to GuideNER/prototypes/{llm-model}-{dataset}-prototypes.",
     )
     parser.add_argument("--split", default="test", help="Named query split: train/validation/test.")
     parser.add_argument("--input-path", default=None, help="Optional explicit query file path.")
@@ -63,9 +68,14 @@ def main() -> None:
         )
 
     checkpoint_path = str(Path(args.checkpoint_path).resolve())
-    prototype_dir = str(
-        Path(args.prototype_dir).resolve() if args.prototype_dir else default_prototype_dir_from_config(config)
-    )
+    if args.prototype_dir:
+        prototype_dir = str(Path(args.prototype_dir).resolve())
+    else:
+        if not args.model_name:
+            raise ValueError(
+                "--model-name is required when --prototype-dir is omitted because prototype paths are keyed by the LLM name."
+            )
+        prototype_dir = str(prototype_dir_from_model_and_dataset(config, model_name=args.model_name).resolve())
     tokenizer = load_tokenizer(checkpoint_path)
     model = load_checkpoint_model(checkpoint_path, output_hidden_states=True)
     query_examples = load_query_examples(

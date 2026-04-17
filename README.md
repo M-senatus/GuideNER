@@ -68,6 +68,8 @@ Main outputs:
 ### 3. Build the guideline prototypes with the fine-tuned DeBERTa checkpoint
 
 This step encodes the support examples in `Llama-3.1-8B-Instruct_summaryrules.json` and pools them into rule-level prototypes for retrieval.
+By default, the prototype directory is named after the guideline-producing LLM and dataset, e.g.
+`prototypes/Llama-3.1-8B-Instruct-conll2003-prototypes/`.
 
 ```bash
 CUDA_VISIBLE_DEVICES=0 python tagging/scripts/build_guideline_prototypes.py \
@@ -78,9 +80,9 @@ CUDA_VISIBLE_DEVICES=0 python tagging/scripts/build_guideline_prototypes.py \
 
 Main outputs:
 
-- `prototypes/deberta-v3-base-conll2003-prototypes/vectors.npy`
-- `prototypes/deberta-v3-base-conll2003-prototypes/metadata.jsonl`
-- `prototypes/deberta-v3-base-conll2003-prototypes/summary.json`
+- `prototypes/Llama-3.1-8B-Instruct-conll2003-prototypes/vectors.npy`
+- `prototypes/Llama-3.1-8B-Instruct-conll2003-prototypes/metadata.jsonl`
+- `prototypes/Llama-3.1-8B-Instruct-conll2003-prototypes/summary.json`
 
 ### 4. Run test-time inference on the test split
 
@@ -92,7 +94,7 @@ CUDA_VISIBLE_DEVICES=0 python run_withrule.py \
   --model_name Llama-3.1-8B-Instruct \
   --tagging_config tagging/configs/deberta_ner_conll2003.json \
   --ner_checkpoint_path ../model/deberta-v3-base/deberta_ner_conll2003/checkpoint-best \
-  --prototype_dir prototypes/deberta-v3-base-conll2003-prototypes
+  --prototype_dir prototypes/Llama-3.1-8B-Instruct-conll2003-prototypes
 ```
 
 Main output:

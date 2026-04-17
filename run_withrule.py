@@ -15,7 +15,7 @@ from tagging.src.infer.guideline_retrieval import (
     load_saved_prototypes,
     retrieve_guideline_records,
 )
-from tagging.src.infer.prototype_paths import default_prototype_dir_from_config
+from tagging.src.infer.prototype_paths import prototype_dir_from_model_and_dataset
 from tagging.src.models.deberta_token_classifier import (
     load_checkpoint_model,
     load_tokenizer as load_ner_tokenizer,
@@ -184,7 +184,13 @@ def main():
     prototype_dir = (
         str(Path(args.prototype_dir).resolve())
         if args.prototype_dir
-        else str(default_prototype_dir_from_config(tagging_config).resolve())
+        else str(
+            prototype_dir_from_model_and_dataset(
+                tagging_config,
+                model_name=args.model_name,
+                dataset_name=args.dataset_name,
+            ).resolve()
+        )
     )
 
     llm_tokenizer = AutoTokenizer.from_pretrained(model_path)

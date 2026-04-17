@@ -6,6 +6,7 @@ TAGGING_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PYTHON_BIN="${PYTHON_BIN:-python}"
 CONFIG_PATH="${CONFIG_PATH:-$TAGGING_DIR/configs/deberta_ner_conll2003.json}"
 CHECKPOINT_PATH="${CHECKPOINT_PATH:-$TAGGING_DIR/../../model/deberta-v3-base/deberta_ner_conll2003/checkpoint-best}"
+MODEL_NAME="${MODEL_NAME:-Llama-3.1-8B-Instruct}"
 SPLIT="${SPLIT:-test}"
 VECTOR_TYPE="${VECTOR_TYPE:-word}"
 SPAN_FILE="${SPAN_FILE:-}"
@@ -28,6 +29,7 @@ Environment overrides:
   PYTHON_BIN       Python executable (default: python)
   CONFIG_PATH      Config file path
   CHECKPOINT_PATH  Fine-tuned checkpoint path
+  MODEL_NAME       LLM name used for prototype directory defaults
   SPLIT            Data split for eval/predict/export (default: test)
   VECTOR_TYPE      Default vector type for export (default: word)
   SPAN_FILE        Optional JSONL span file for span export
@@ -38,7 +40,7 @@ Examples:
   bash tagging/run.sh predict
   bash tagging/run.sh export word
   bash tagging/run.sh guideline-build --guideline-path datasets/conll2003/Qwen2.5-7B-Instruct_summaryrules.json
-  bash tagging/run.sh guideline-retrieve --prototype-dir ../../prototypes/deberta-v3-base-conll2003-prototypes
+  MODEL_NAME=Qwen2.5-7B-Instruct bash tagging/run.sh guideline-retrieve
   SPLIT=validation bash tagging/run.sh eval
   CHECKPOINT_PATH="$TAGGING_DIR/../../model/deberta-v3-base/deberta_ner_conll2003/checkpoint-best" bash tagging/run.sh export span
   bash tagging/run.sh smoke
@@ -119,6 +121,7 @@ case "$COMMAND" in
     "$PYTHON_BIN" "$TAGGING_DIR/scripts/retrieve_guideline.py" \
       --config "$CONFIG_PATH" \
       --checkpoint-path "$CHECKPOINT_PATH" \
+      --model-name "$MODEL_NAME" \
       --split "$SPLIT" \
       "$@"
     ;;

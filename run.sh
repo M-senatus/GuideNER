@@ -21,7 +21,7 @@ TEMPERATURE="${TEMPERATURE:-0}"
 TOP_P="${TOP_P:-1}"
 CUDA_DEVICES="${CUDA_DEVICES:-0}"
 RESULT_FILE="${RESULT_FILE:-datasets/${DATASET_NAME}/${MODEL_NAME}_withrule_retrieval_result_detail.jsonl}"
-PROTOTYPE_DIR="${PROTOTYPE_DIR:-prototypes/deberta-v3-base-${DATASET_NAME}-prototypes}"
+PROTOTYPE_DIR="${PROTOTYPE_DIR:-prototypes/${MODEL_NAME}-${DATASET_NAME}-prototypes}"
 
 require_file() {
   if [[ ! -f "$1" ]]; then

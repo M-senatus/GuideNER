@@ -89,8 +89,9 @@ bash tagging/run.sh guideline-build \
   --guideline-path datasets/conll2003/Qwen2.5-7B-Instruct_summaryrules.json
 ```
 
-By default outputs are written under `../prototypes/{model}-{dataset}-prototypes/`, for example
-`../prototypes/deberta-v3-base-conll2003-prototypes/`, with:
+By default outputs are written under `../prototypes/{llm-model}-{dataset}-prototypes/`, inferred from the
+guideline filename such as `Qwen2.5-7B-Instruct_summaryrules.json`. For example:
+`../prototypes/Qwen2.5-7B-Instruct-conll2003-prototypes/`, with:
 
 - `vectors.npy`
 - `metadata.jsonl`
@@ -108,8 +109,7 @@ This is the inference stage. It:
 Example:
 
 ```bash
-bash tagging/run.sh guideline-retrieve \
-  --prototype-dir ../../prototypes/deberta-v3-base-conll2003-prototypes \
+MODEL_NAME=Qwen2.5-7B-Instruct bash tagging/run.sh guideline-retrieve \
   --top-k 5
 ```
 
