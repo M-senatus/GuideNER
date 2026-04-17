@@ -5,7 +5,7 @@ TAGGING_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 PYTHON_BIN="${PYTHON_BIN:-python}"
 CONFIG_PATH="${CONFIG_PATH:-$TAGGING_DIR/configs/deberta_ner_conll2003.json}"
-CHECKPOINT_PATH="${CHECKPOINT_PATH:-$TAGGING_DIR/outputs/deberta_ner_conll2003/checkpoint-best}"
+CHECKPOINT_PATH="${CHECKPOINT_PATH:-$TAGGING_DIR/../../model/deberta-v3-base/deberta_ner_conll2003/checkpoint-best}"
 SPLIT="${SPLIT:-test}"
 VECTOR_TYPE="${VECTOR_TYPE:-word}"
 SPAN_FILE="${SPAN_FILE:-}"
@@ -36,7 +36,7 @@ Examples:
   bash tagging/run.sh predict
   bash tagging/run.sh export word
   SPLIT=validation bash tagging/run.sh eval
-  CHECKPOINT_PATH="$TAGGING_DIR/outputs/deberta_ner_conll2003/checkpoint-best" bash tagging/run.sh export span
+  CHECKPOINT_PATH="$TAGGING_DIR/../../model/deberta-v3-base/deberta_ner_conll2003/checkpoint-best" bash tagging/run.sh export span
   bash tagging/run.sh smoke
 EOF
 }

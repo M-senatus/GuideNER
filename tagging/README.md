@@ -2,7 +2,7 @@
 
 This directory contains a minimal, reproducible Hugging Face NER pipeline for:
 
-- fine-tuning `microsoft/deberta-v3-base` on BIO-style NER
+- fine-tuning a local `deberta-v3-base` checkpoint on BIO-style NER
 - evaluating with seqeval span-level metrics
 - exporting token, word, and span vectors for downstream retrieval
 
@@ -28,6 +28,11 @@ The pipeline also supports JSONL input where each record contains:
 {"tokens": ["EU", "rejects"], "ner_tags": ["B-ORG", "O"]}
 ```
 
+Default local model and large artifacts:
+
+- base model: `../model/deberta-v3-base/deberta-v3-base`
+- fine-tuned checkpoints and exported vectors: `../model/deberta-v3-base/deberta_ner_conll2003`
+
 ## Run Training
 
 From the repository root:
@@ -38,9 +43,9 @@ bash tagging/run.sh train
 
 Artifacts are written under:
 
-- `tagging/outputs/deberta_ner_conll2003/checkpoints`
-- `tagging/outputs/deberta_ner_conll2003/checkpoint-best`
-- `tagging/outputs/deberta_ner_conll2003/artifacts`
+- `../model/deberta-v3-base/deberta_ner_conll2003/checkpoints`
+- `../model/deberta-v3-base/deberta_ner_conll2003/checkpoint-best`
+- `../model/deberta-v3-base/deberta_ner_conll2003/artifacts`
 
 ## Run Evaluation
 
@@ -110,6 +115,6 @@ You can override common settings with environment variables:
 
 ```bash
 SPLIT=validation bash tagging/run.sh eval
-CHECKPOINT_PATH=tagging/outputs/deberta_ner_conll2003/checkpoint-best bash tagging/run.sh export span
+CHECKPOINT_PATH=../model/deberta-v3-base/deberta_ner_conll2003/checkpoint-best bash tagging/run.sh export span
 PYTHON_BIN=python bash tagging/run.sh train
 ```

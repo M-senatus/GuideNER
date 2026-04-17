@@ -14,11 +14,11 @@
     "max_test_samples": null
   },
   "model": {
-    "name_or_path": "microsoft/deberta-v3-base",
+    "name_or_path": "../../model/deberta-v3-base/deberta-v3-base",
     "max_length": 256
   },
   "training": {
-    "output_dir": "outputs/deberta_ner_conll2003",
+    "output_dir": "../../model/deberta-v3-base/deberta_ner_conll2003",
     "num_train_epochs": 3,
     "per_device_train_batch_size": 8,
     "per_device_eval_batch_size": 8,
@@ -41,7 +41,7 @@
     "batch_size": 8
   },
   "export": {
-    "output_dir": "outputs/deberta_ner_conll2003/exports",
+    "output_dir": "../../model/deberta-v3-base/deberta_ner_conll2003/exports",
     "batch_size": 8,
     "hidden_state_layer": -1,
     "vector_type": "word",
