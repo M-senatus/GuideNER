@@ -117,7 +117,9 @@ python ner_evaluate.py \
 The repository also provides shell wrappers for the two main sub-pipelines:
 
 ```bash
-bash run.sh
+bash run.sh summary
+bash run.sh infer
+bash run.sh evaluate
 bash tagging/run.sh train
 bash tagging/run.sh guideline-build \
   --guideline-path datasets/conll2003/Llama-3.1-8B-Instruct_summaryrules.json
