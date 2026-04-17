@@ -3,7 +3,6 @@ import ast
 import json
 import os
 import re
-import sys
 from pathlib import Path
 
 from tqdm import tqdm
@@ -11,15 +10,16 @@ from vllm import LLM, SamplingParams
 from transformers import AutoTokenizer
 
 from EasyChatTemplating.util_tools import convert_userprompt_transformers, skip_special_tokens_transformers
-
-
-TAGGING_ROOT = Path(__file__).resolve().parent / "tagging"
-if str(TAGGING_ROOT) not in sys.path:
-    sys.path.insert(0, str(TAGGING_ROOT))
-
-from src.infer.guideline_retrieval import load_query_examples, load_saved_prototypes, retrieve_guideline_records
-from src.models.deberta_token_classifier import load_checkpoint_model, load_tokenizer as load_ner_tokenizer
-from src.utils.config import load_config
+from tagging.src.infer.guideline_retrieval import (
+    load_query_examples,
+    load_saved_prototypes,
+    retrieve_guideline_records,
+)
+from tagging.src.models.deberta_token_classifier import (
+    load_checkpoint_model,
+    load_tokenizer as load_ner_tokenizer,
+)
+from tagging.src.utils.config import load_config
 
 
 label_pattern = r"\[\[(.*?)\]\]"
