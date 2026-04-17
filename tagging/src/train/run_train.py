@@ -11,7 +11,7 @@ from ..data.labeling import build_label_mappings, validate_example_labels
 from ..data.readers import load_ner_examples
 from ..data.tokenization import examples_to_dataset, tokenize_and_align_labels
 from ..models.deberta_token_classifier import load_token_classification_model, load_tokenizer
-from ..train.metrics import build_compute_metrics
+from ..train.metrics import build_compute_metrics, ensure_seqeval_available
 from ..train.trainer_factory import create_trainer, create_training_arguments
 from ..utils.config import load_config
 from ..utils.io import ensure_dir, write_json
@@ -86,6 +86,7 @@ def main() -> None:
         "data.max_test_samples": args.max_test_samples,
     }
     config = load_config(args.config, overrides=overrides)
+    ensure_seqeval_available(task_name="training-time NER evaluation")
     set_global_seed(int(config["experiment"]["seed"]))
 
     output_paths = _resolve_output_paths(Path(config["training"]["output_dir"]))

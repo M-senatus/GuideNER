@@ -18,9 +18,13 @@ else:
     _SEQEVAL_IMPORT_ERROR = None
 
 
-def _ensure_seqeval() -> None:
+def ensure_seqeval_available(task_name: str = "NER evaluation") -> None:
+    """Raise a clear error when the optional seqeval dependency is missing."""
     if _SEQEVAL_IMPORT_ERROR is not None:
-        raise ImportError("seqeval is required for NER evaluation.") from _SEQEVAL_IMPORT_ERROR
+        raise ImportError(
+            f"seqeval is required for {task_name}. "
+            "Install it with `pip install seqeval` or `pip install -r tagging/requirements.txt`."
+        ) from _SEQEVAL_IMPORT_ERROR
 
 
 def logits_to_label_sequences(
@@ -52,7 +56,7 @@ def compute_seqeval_metrics_from_sequences(
     pred_sequences: list[list[str]],
 ) -> dict[str, float]:
     """Compute standard span-level NER metrics from tag sequences."""
-    _ensure_seqeval()
+    ensure_seqeval_available()
     return {
         "precision": float(precision_score(true_sequences, pred_sequences)),
         "recall": float(recall_score(true_sequences, pred_sequences)),
@@ -63,6 +67,9 @@ def compute_seqeval_metrics_from_sequences(
 
 def build_compute_metrics(id2label: dict[int, str]):
     """Build a Trainer-compatible metric callback."""
+    # Fail before training starts instead of surfacing a missing metric dependency
+    # only when the first evaluation step runs.
+    ensure_seqeval_available(task_name="training-time NER evaluation")
 
     def _compute_metrics(eval_prediction: Any) -> dict[str, float]:
         predictions, labels = eval_prediction

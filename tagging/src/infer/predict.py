@@ -18,7 +18,7 @@ from ..data.collators import ExportCollator
 from ..data.readers import load_ner_examples
 from ..data.tokenization import build_inference_features
 from ..models.deberta_token_classifier import load_checkpoint_model, load_tokenizer
-from ..train.metrics import compute_seqeval_metrics_from_sequences
+from ..train.metrics import compute_seqeval_metrics_from_sequences, ensure_seqeval_available
 from ..utils.config import load_config
 from ..utils.io import ensure_dir, write_json, write_jsonl
 
@@ -153,6 +153,8 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     """Run standalone prediction and optionally compute metrics."""
     args = parse_args()
+    if args.compute_metrics:
+        ensure_seqeval_available(task_name="prediction-time NER evaluation")
     config = load_config(args.config, overrides={"inference.batch_size": args.batch_size})
     data_path, input_format = _resolve_data_path(config, split=args.split, input_path=args.input_path)
     examples = load_ner_examples(data_path, input_format=input_format, split=args.split)
