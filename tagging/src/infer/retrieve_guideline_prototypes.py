@@ -8,6 +8,7 @@ from pathlib import Path
 from ..models.deberta_token_classifier import load_checkpoint_model, load_tokenizer
 from ..utils.config import load_config
 from ..utils.io import write_json
+from ..data.split_guard import normalize_split
 from .guideline_retrieval import load_query_examples, load_saved_prototypes, retrieve_guideline_prototypes
 
 
@@ -19,6 +20,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--prototype-dir", required=True, help="Directory that contains saved prototype files.")
     parser.add_argument("--split", default="test", help="Named query split: train/validation/test.")
     parser.add_argument("--input-path", default=None, help="Optional explicit query file path.")
+    parser.add_argument("--stage", default=None, help="Execution stage: train/dev. Test retrieval export is forbidden.")
     parser.add_argument("--output-dir", default=None, help="Directory for retrieval outputs.")
     parser.add_argument("--batch-size", type=int, default=None, help="Override inference batch size.")
     parser.add_argument("--max-query-samples", type=int, default=None, help="Optional cap for query examples.")
@@ -27,9 +29,21 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def _default_stage_for_split(split: str) -> str:
+    normalized_split = normalize_split(split)
+    if normalized_split == "train":
+        return "train"
+    if normalized_split == "dev":
+        return "dev"
+    raise ValueError(
+        "retrieve_guideline_prototypes.py must not export retrieval results for the test split."
+    )
+
+
 def main() -> None:
     """Run inference-time retrieval against previously saved guideline prototypes."""
     args = parse_args()
+    stage = args.stage or _default_stage_for_split(args.split)
     config = load_config(
         args.config,
         overrides={
@@ -37,6 +51,11 @@ def main() -> None:
             "export.hidden_state_layer": args.hidden_state_layer,
         },
     )
+    if normalize_split(args.split) == "test":
+        raise ValueError(
+            "Standalone retrieval export on the test split is forbidden. "
+            "Use the final inference script instead."
+        )
 
     checkpoint_path = str(Path(args.checkpoint_path).resolve())
     prototype_dir = str(Path(args.prototype_dir).resolve())
@@ -45,6 +64,7 @@ def main() -> None:
     query_examples = load_query_examples(
         config,
         split=args.split,
+        stage=stage,
         input_path=args.input_path,
         max_samples=args.max_query_samples,
     )

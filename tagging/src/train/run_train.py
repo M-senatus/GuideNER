@@ -8,7 +8,7 @@ from typing import Any
 
 from ..data.collators import get_token_classification_collator
 from ..data.labeling import build_label_mappings, validate_example_labels
-from ..data.readers import load_ner_examples
+from ..data.readers import load_dev_data, load_train_data
 from ..data.tokenization import examples_to_dataset, tokenize_and_align_labels
 from ..models.deberta_token_classifier import load_token_classification_model, load_tokenizer
 from ..train.metrics import build_compute_metrics, ensure_seqeval_available
@@ -29,28 +29,23 @@ def _resolve_output_paths(output_root: Path) -> dict[str, Path]:
     }
 
 
-def _load_splits(config: dict[str, Any]) -> tuple[list, list, list]:
-    """Load train, validation, and test examples from disk."""
+def _load_splits(config: dict[str, Any], stage: str) -> tuple[list, list]:
+    """Load train and validation examples from disk without touching test."""
     data_cfg = config["data"]
-    train_examples = load_ner_examples(
+    train_examples = load_train_data(
         data_cfg["train_path"],
         input_format=data_cfg["format"],
-        split="train",
         max_samples=data_cfg.get("max_train_samples"),
+        stage=stage,
     )
-    validation_examples = load_ner_examples(
+    validation_examples = load_dev_data(
         data_cfg["validation_path"],
         input_format=data_cfg["format"],
-        split="validation",
         max_samples=data_cfg.get("max_validation_samples"),
+        stage="dev",
+        split_name="validation",
     )
-    test_examples = load_ner_examples(
-        data_cfg["test_path"],
-        input_format=data_cfg["format"],
-        split="test",
-        max_samples=data_cfg.get("max_test_samples"),
-    )
-    return train_examples, validation_examples, test_examples
+    return train_examples, validation_examples
 
 
 def parse_args() -> argparse.Namespace:
@@ -72,7 +67,13 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     """Run the end-to-end NER fine-tuning pipeline."""
+    stage = "train"
     args = parse_args()
+    if args.max_test_samples is not None:
+        raise ValueError(
+            "Training stage must not access test data. "
+            "Remove --max-test-samples and run final test separately."
+        )
     overrides = {
         "training.output_dir": args.output_dir,
         "model.name_or_path": args.model_name_or_path,
@@ -83,7 +84,6 @@ def main() -> None:
         "training.per_device_eval_batch_size": args.per_device_eval_batch_size,
         "data.max_train_samples": args.max_train_samples,
         "data.max_validation_samples": args.max_validation_samples,
-        "data.max_test_samples": args.max_test_samples,
     }
     config = load_config(args.config, overrides=overrides)
     ensure_seqeval_available(task_name="training-time NER evaluation")
@@ -92,10 +92,9 @@ def main() -> None:
     output_paths = _resolve_output_paths(Path(config["training"]["output_dir"]))
     write_json(output_paths["artifacts"] / "resolved_config.json", config)
 
-    train_examples, validation_examples, test_examples = _load_splits(config)
+    train_examples, validation_examples = _load_splits(config, stage=stage)
     labels, label2id, id2label = build_label_mappings(train_examples)
     validate_example_labels(validation_examples, set(labels))
-    validate_example_labels(test_examples, set(labels))
 
     write_json(output_paths["artifacts"] / "labels.json", {"labels": labels})
     write_json(output_paths["artifacts"] / "label2id.json", label2id)
@@ -117,8 +116,6 @@ def main() -> None:
         label2id,
         max_length,
     )
-    test_dataset = tokenize_and_align_labels(examples_to_dataset(test_examples), tokenizer, label2id, max_length)
-
     training_args = create_training_arguments(config)
     trainer = create_trainer(
         model=model,
@@ -140,9 +137,6 @@ def main() -> None:
     eval_metrics = trainer.evaluate(eval_dataset=validation_dataset, metric_key_prefix="eval")
     write_json(output_paths["eval"] / "eval_metrics.json", eval_metrics)
 
-    test_output = trainer.predict(test_dataset, metric_key_prefix="test")
-    write_json(output_paths["eval"] / "test_metrics.json", test_output.metrics)
-
     trainer.save_model(str(output_paths["checkpoint_best"]))
     tokenizer.save_pretrained(str(output_paths["checkpoint_best"]))
     write_json(
@@ -152,7 +146,6 @@ def main() -> None:
             "trainer_best_model_checkpoint": trainer.state.best_model_checkpoint,
             "num_train_examples": len(train_examples),
             "num_validation_examples": len(validation_examples),
-            "num_test_examples": len(test_examples),
         },
     )
 

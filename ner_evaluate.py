@@ -3,6 +3,8 @@ import json
 import os
 from typing import Iterable
 
+from guide_dataset_io import load_label_schema, load_test_with_labels_for_final_eval
+
 
 def normalize_entity_type(entity_type: str) -> str:
     """Normalize entity type names before metric comparison."""
@@ -89,6 +91,7 @@ def iter_jsonl(path: str) -> Iterable[dict]:
 
 
 def main():
+    stage = "final_eval"
     parser = argparse.ArgumentParser()
     parser.add_argument("--dataset_name", default="conll2003", choices=["conll2003", "ace04", "ace05", "genia"])
     parser.add_argument("--model_name", default="Llama-3.1-8B-Instruct")
@@ -101,21 +104,35 @@ def main():
         if args.result_file
         else os.path.join(dataset_path, f"{args.model_name}_withrule_retrieval_result_detail.jsonl")
     )
-    label_file = os.path.join(dataset_path, "labels.jsonl")
-
-    allowed_types = load_allowed_types(label_file)
+    allowed_types = {
+        normalize_entity_type(label_name)
+        for label_name in load_label_schema(dataset_path).keys()
+    }
+    gold_records = load_test_with_labels_for_final_eval(dataset_path, stage=stage)
+    gold_by_sample_id = {record["sample_id"]: record for record in gold_records}
+    if len(gold_by_sample_id) != len(gold_records):
+        raise ValueError("Duplicate sample_id values detected in final-eval test records.")
     evaluator = Evaluate()
     invalid_count = 0
     success_count = 0
+    seen_prediction_ids: set[str] = set()
 
     for record in iter_jsonl(eval_file):
         if record.get("status") != "success":
             invalid_count += 1
             continue
+        sample_id = record.get("sample_id")
+        if not isinstance(sample_id, str):
+            raise ValueError("Final-eval prediction records must contain a string sample_id.")
+        if sample_id not in gold_by_sample_id:
+            raise ValueError(f"Prediction sample_id '{sample_id}' was not found in the test set.")
+        if sample_id in seen_prediction_ids:
+            raise ValueError(f"Duplicate prediction sample_id '{sample_id}' found in {eval_file}.")
+        seen_prediction_ids.add(sample_id)
         success_count += 1
         evaluator.update(
             record.get("predicted_labels", []),
-            record.get("labels", []),
+            gold_by_sample_id[sample_id]["entity_labels"],
             allowed_types,
         )
 

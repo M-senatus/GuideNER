@@ -8,6 +8,7 @@ from tqdm import tqdm
 from vllm import LLM, SamplingParams
 from transformers import AutoTokenizer
 from EasyChatTemplating.util_tools import convert_userprompt_transformers, skip_special_tokens_transformers
+from guide_dataset_io import load_train_data
 
 """
 本脚本是 GuideNER 的“规则构建”主入口，整体分为三步：
@@ -488,6 +489,7 @@ def summary(rule_file_name, label_file, fw, top_k=20, progress_bar=None):
 
 
 def main():
+    stage = "train"
     # 该脚本通常直接运行：
     # python rule_summary.py --dataset_name conll2003 --model_name Llama-3.1-8B-Instruct
     parser = argparse.ArgumentParser()
@@ -535,9 +537,9 @@ def main():
     
     task_prompt = eval(f"{args.dataset_name}_prompt")
     valid_prompt = eval(f"{args.dataset_name}_valid_prompt")
-    train_file = os.path.join(dataset_path, "train.jsonl")
+    train_records = load_train_data(dataset_path, stage=stage)
     overall_progress = tqdm(
-        total=count_lines(train_file),
+        total=len(train_records),
         desc="Overall progress | generate rules",
         unit="step",
         file=sys.stdout,
@@ -545,45 +547,42 @@ def main():
     )
     
     # 第一步：遍历训练集，为每条样本生成候选规则。
-    with open(os.path.join(dataset_path, "train.jsonl"), "r", encoding='utf8') as f:
-        for i, line in enumerate(f):
-            line_json = json.loads(line)
-            
-            text = line_json["text"]
-            entity_labels = line_json["entity_labels"]
+    for record in train_records:
+        text = record["text"]
+        entity_labels = record["entity_labels"]
+
+        if len(entity_labels) == 0:
+            overall_progress.update(1)
+            continue
             
             # 无实体样本对规则总结帮助有限，这里直接跳过。
-            if len(entity_labels) == 0:
-                overall_progress.update(1)
-                continue
-            
-            prompt_predict = task_prompt.format(input_text = text, input_annotations = entity_labels)
-            message = convert_userprompt_transformers(tokenizer, prompt_predict, add_generation_prompt=True)
-            
-            if len(messages) < batch_size - 1:
-                texts.append(text)
-                labels.append(entity_labels)
-                messages.append(message)
-            else:
-                texts.append(text)
-                labels.append(entity_labels)
-                messages.append(message)
-                
-                outputs = llm.generate(messages, sampling_params, use_tqdm=False)
-                
-                predict_batch(outputs, tokenizer, fw, texts, labels)
-                
-                messages = []
-                texts = []
-                labels = []
-
-            overall_progress.update(1)
+        prompt_predict = task_prompt.format(input_text = text, input_annotations = entity_labels)
+        message = convert_userprompt_transformers(tokenizer, prompt_predict, add_generation_prompt=True)
         
-        if len(messages) > 0:
+        if len(messages) < batch_size - 1:
+            texts.append(text)
+            labels.append(entity_labels)
+            messages.append(message)
+        else:
+            texts.append(text)
+            labels.append(entity_labels)
+            messages.append(message)
+            
             outputs = llm.generate(messages, sampling_params, use_tqdm=False)
+            
             predict_batch(outputs, tokenizer, fw, texts, labels)
+            
+            messages = []
+            texts = []
+            labels = []
+
+        overall_progress.update(1)
         
-        fw.close()
+    if len(messages) > 0:
+        outputs = llm.generate(messages, sampling_params, use_tqdm=False)
+        predict_batch(outputs, tokenizer, fw, texts, labels)
+    
+    fw.close()
     
     # 第二步：验证 rules.txt 中的规则是否真的能帮助识别原句实体。
     fr = open(rule_file_name, 'r', encoding='utf8')

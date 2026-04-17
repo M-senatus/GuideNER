@@ -16,8 +16,9 @@ except ImportError as exc:  # pragma: no cover - dependency checked in runtime e
     raise ImportError("PyTorch is required for guideline retrieval.") from exc
 
 from ..data.collators import ExportCollator
-from ..data.readers import load_ner_examples
+from ..data.readers import load_dev_data, load_test_text_only, load_test_with_labels_for_final_eval, load_train_data
 from ..data.schemas import NERExample
+from ..data.split_guard import ensure_dev_access, ensure_train_access, normalize_split, normalize_stage
 from ..data.tokenization import build_inference_features
 from ..models.deberta_token_classifier import load_checkpoint_model, load_tokenizer
 from ..utils.config import load_config
@@ -288,7 +289,8 @@ def _load_text_jsonl_examples(path: str | Path, split: str, max_samples: int | N
                 continue
 
             ner_tags = record.get("ner_tags")
-            if not isinstance(ner_tags, list) or len(ner_tags) != len(tokens):
+            has_labels = isinstance(ner_tags, list) and len(ner_tags) == len(tokens)
+            if not has_labels:
                 ner_tags = ["O"] * len(tokens)
 
             examples.append(
@@ -298,6 +300,7 @@ def _load_text_jsonl_examples(path: str | Path, split: str, max_samples: int | N
                     ner_tags=[str(tag) for tag in ner_tags],
                     split=str(record.get("split", split)),
                     source_path=str(file_path.resolve()),
+                    has_labels=has_labels,
                 )
             )
             if max_samples is not None and len(examples) >= max(0, int(max_samples)):
@@ -319,30 +322,63 @@ def _peek_first_jsonl_record(path: str | Path) -> dict[str, Any] | None:
 def load_query_examples(
     config: dict[str, Any],
     split: str,
+    stage: str,
     input_path: str | None = None,
     max_samples: int | None = None,
 ) -> list[NERExample]:
     """Load retrieval queries from the configured split or an explicit input file."""
     data_path, input_format = _resolve_data_path(config, split=split, input_path=input_path)
     file_path = Path(data_path)
+    normalized_split = normalize_split(split)
+    normalized_stage = normalize_stage(stage)
+
+    if normalized_split == "test":
+        if normalized_stage == "test_infer":
+            return load_test_text_only(
+                file_path,
+                input_format=input_format,
+                max_samples=max_samples,
+                stage=normalized_stage,
+                split_name=normalized_split,
+            )
+        if normalized_stage == "final_eval":
+            return load_test_with_labels_for_final_eval(
+                file_path,
+                input_format=input_format,
+                max_samples=max_samples,
+                stage=normalized_stage,
+                split_name=normalized_split,
+            )
+        raise ValueError(
+            f"Stage '{normalized_stage}' is not allowed to access test retrieval queries."
+        )
 
     if file_path.suffix.lower() == ".jsonl":
         first_record = _peek_first_jsonl_record(file_path)
         if first_record is not None and any(key in first_record for key in ("tokens", "text", "sentence")):
-            return _load_text_jsonl_examples(file_path, split=split, max_samples=max_samples)
-        return load_ner_examples(
+            if normalized_split == "train":
+                ensure_train_access(normalized_stage, operation="load_query_examples()", source_path=str(file_path))
+                return _load_text_jsonl_examples(file_path, split=normalized_split, max_samples=max_samples)
+            if normalized_split == "dev":
+                ensure_dev_access(normalized_stage, operation="load_query_examples()", source_path=str(file_path))
+                return _load_text_jsonl_examples(file_path, split=normalized_split, max_samples=max_samples)
+
+    if normalized_split == "train":
+        return load_train_data(
             file_path,
             input_format=input_format,
-            split=split,
             max_samples=max_samples,
+            stage=normalized_stage,
         )
-
-    return load_ner_examples(
-        file_path,
-        input_format=input_format,
-        split=split,
-        max_samples=max_samples,
-    )
+    if normalized_split == "dev":
+        return load_dev_data(
+            file_path,
+            input_format=input_format,
+            max_samples=max_samples,
+            stage=normalized_stage,
+            split_name=split,
+        )
+    raise ValueError(f"Unsupported split '{split}' for retrieval query loading.")
 
 
 def encode_examples(
@@ -382,6 +418,7 @@ def encode_examples(
                         "source_path": batch["source_path"][batch_index],
                         "tokens": list(batch["tokens"][batch_index]),
                         "ner_tags": list(batch["ner_tags"][batch_index]),
+                        "has_labels": bool(batch["has_labels"][batch_index]),
                         "word_vectors": word_vectors,
                     }
                 )
@@ -552,12 +589,13 @@ def retrieve_guideline_records(
 
             token_retrievals.append(
                 {
-                    "word_index": word_index,
-                    "token_text": record["tokens"][word_index],
-                    "gold_tag": record["ner_tags"][word_index] if word_index < len(record["ner_tags"]) else "O",
-                    "top_k": hits,
-                }
-            )
+                        "word_index": word_index,
+                        "token_text": record["tokens"][word_index],
+                        "top_k": hits,
+                    }
+                )
+            if record["has_labels"] and word_index < len(record["ner_tags"]):
+                token_retrievals[-1]["gold_tag"] = record["ner_tags"][word_index]
 
         total_visible_tokens += len(token_retrievals)
         retrieval_records.append(
@@ -567,12 +605,13 @@ def retrieve_guideline_records(
                 "source_path": record["source_path"],
                 "checkpoint_path": checkpoint_path,
                 "tokens": record["tokens"],
-                "gold_tags": record["ner_tags"],
                 "visible_tokens": [record["tokens"][idx] for idx in visible_word_indices],
                 "truncated": len(visible_word_indices) < len(record["tokens"]),
                 "token_retrievals": token_retrievals,
             }
         )
+        if record["has_labels"]:
+            retrieval_records[-1]["gold_tags"] = record["ner_tags"]
 
     summary = {
         "query_count": len(retrieval_records),

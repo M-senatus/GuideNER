@@ -18,8 +18,9 @@ except ImportError as exc:  # pragma: no cover - dependency checked in runtime e
 
 from ..data.collators import ExportCollator
 from ..data.labeling import extract_spans_from_bio
-from ..data.readers import load_ner_examples
+from ..data.readers import load_dev_data, load_train_data
 from ..data.schemas import SpanAnnotation
+from ..data.split_guard import normalize_split
 from ..data.tokenization import build_inference_features
 from ..models.deberta_token_classifier import load_checkpoint_model, load_tokenizer
 from ..utils.config import load_config
@@ -42,6 +43,18 @@ def _resolve_data_path(config: dict[str, Any], split: str | None, input_path: st
     if split not in split_map:
         raise ValueError(f"Unsupported split '{split}'.")
     return config["data"][split_map[split]], config["data"]["format"]
+
+
+def _default_stage_for_split(split: str) -> str:
+    normalized_split = normalize_split(split)
+    if normalized_split == "train":
+        return "train"
+    if normalized_split == "dev":
+        return "dev"
+    raise ValueError(
+        "export_hidden_states.py must not access the test split. "
+        "Do not export test vectors or cache test examples."
+    )
 
 
 def _load_span_file(span_file: str | None) -> dict[str, list[SpanAnnotation]]:
@@ -144,6 +157,7 @@ def export_vectors(
                 sample_word_ids = batch["word_ids"][batch_index][:sequence_length]
                 sample_tokens = batch["tokens"][batch_index]
                 sample_gold_tags = batch["ner_tags"][batch_index]
+                sample_has_labels = bool(batch["has_labels"][batch_index])
                 word_vectors = _pool_word_vectors(sample_hidden, sample_word_ids, sequence_length)
 
                 if vector_type == "token":
@@ -164,10 +178,11 @@ def export_vectors(
                                 "word_text": sample_tokens[word_id],
                                 "tokens": sample_tokens,
                                 "words": sample_tokens,
-                                "label_sequence": sample_gold_tags,
-                                "entity_type": sample_gold_tags[word_id],
                             }
                         )
+                        if sample_has_labels:
+                            metadata[-1]["label_sequence"] = sample_gold_tags
+                            metadata[-1]["entity_type"] = sample_gold_tags[word_id]
                 elif vector_type == "word":
                     for word_index in sorted(word_vectors.keys()):
                         vectors.append(word_vectors[word_index].astype(np.float32))
@@ -182,11 +197,16 @@ def export_vectors(
                                 "word_text": sample_tokens[word_index],
                                 "tokens": sample_tokens,
                                 "words": sample_tokens,
-                                "label_sequence": sample_gold_tags,
-                                "entity_type": sample_gold_tags[word_index],
                             }
                         )
+                        if sample_has_labels:
+                            metadata[-1]["label_sequence"] = sample_gold_tags
+                            metadata[-1]["entity_type"] = sample_gold_tags[word_index]
                 elif vector_type == "span":
+                    if not sample_has_labels:
+                        raise ValueError(
+                            f"Span export requires labels, but sample '{sample_id}' is unlabeled."
+                        )
                     example = example_map[sample_id]
                     spans = explicit_spans.get(sample_id, extract_spans_from_bio(example))
                     for span in spans:
@@ -210,10 +230,10 @@ def export_vectors(
                                 "span_text": span.metadata.get("span_text", " ".join(sample_tokens[span.start:span.end])),
                                 "tokens": sample_tokens,
                                 "words": sample_tokens,
-                                "label_sequence": sample_gold_tags,
                                 "entity_type": span.entity_type,
                             }
                         )
+                        metadata[-1]["label_sequence"] = sample_gold_tags
                 else:
                     raise ValueError(f"Unsupported vector_type: {vector_type}")
 
@@ -242,6 +262,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--checkpoint-path", required=True, help="Fine-tuned checkpoint directory.")
     parser.add_argument("--split", default="test", help="Named split to export: train/validation/test.")
     parser.add_argument("--input-path", default=None, help="Optional explicit input file path.")
+    parser.add_argument("--stage", default=None, help="Execution stage: train/dev. Test export is forbidden.")
     parser.add_argument("--span-file", default=None, help="Optional JSONL span file for span export.")
     parser.add_argument("--vector-type", choices=["token", "word", "span"], default=None)
     parser.add_argument("--output-dir", default=None, help="Override export.output_dir.")
@@ -254,6 +275,11 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     """Run hidden-state export from the CLI."""
     args = parse_args()
+    stage = args.stage or _default_stage_for_split(args.split)
+    if normalize_split(args.split) == "test":
+        raise ValueError(
+            "export_hidden_states.py must not read or cache the test split."
+        )
     overrides = {
         "export.output_dir": args.output_dir,
         "export.batch_size": args.batch_size,
@@ -263,12 +289,21 @@ def main() -> None:
     }
     config = load_config(args.config, overrides=overrides)
     data_path, input_format = _resolve_data_path(config, split=args.split, input_path=args.input_path)
-    examples = load_ner_examples(
-        data_path,
-        input_format=input_format,
-        split=args.split,
-        max_samples=config["export"].get("max_samples"),
-    )
+    if normalize_split(args.split) == "train":
+        examples = load_train_data(
+            data_path,
+            input_format=input_format,
+            max_samples=config["export"].get("max_samples"),
+            stage=stage,
+        )
+    else:
+        examples = load_dev_data(
+            data_path,
+            input_format=input_format,
+            max_samples=config["export"].get("max_samples"),
+            stage=stage,
+            split_name=args.split,
+        )
 
     checkpoint_path = str(Path(args.checkpoint_path).resolve())
     tokenizer = load_tokenizer(checkpoint_path)

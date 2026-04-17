@@ -20,6 +20,7 @@ from tagging.src.models.deberta_token_classifier import (
     load_tokenizer as load_ner_tokenizer,
 )
 from tagging.src.utils.config import load_config
+from guide_dataset_io import load_test_text_only
 
 
 label_pattern = r"\[\[(.*?)\]\]"
@@ -132,7 +133,7 @@ def parse_prediction(text: str) -> tuple[str, list]:
 
 
 def predict_batch(outputs, tokenizer, fw, batch_records):
-    """Write one batch of final LLM predictions with retrieval metadata."""
+    """Write one batch of text-only final test predictions."""
     for output, record in zip(outputs, batch_records):
         generated_text = skip_special_tokens_transformers(tokenizer, output.outputs[0].text)
         status, predicted_labels = parse_prediction(generated_text)
@@ -140,33 +141,13 @@ def predict_batch(outputs, tokenizer, fw, batch_records):
         result_dict = {
             "sample_id": record["sample_id"],
             "text": record["text"],
-            "labels": record["labels"],
             "status": status,
             "predicted_labels": predicted_labels,
-            "prompt": record["prompt"],
-            "retrieved_guideline_summary": record["retrieved_guideline_summary"],
-            "token_guideline_retrievals": record["token_guideline_retrievals"],
-            "llm_raw_output": generated_text,
         }
 
         fw.write(json.dumps(result_dict, ensure_ascii=False))
         fw.write("\n")
         fw.flush()
-
-
-def load_test_records(test_file: str) -> list[dict]:
-    """Read test.jsonl into a list of dictionaries."""
-    records = []
-    with open(test_file, "r", encoding="utf8") as f:
-        for idx, line in enumerate(f):
-            stripped = line.strip()
-            if not stripped:
-                continue
-            record = json.loads(stripped)
-            record["sample_id"] = str(record.get("sample_id", f"test-{idx}"))
-            records.append(record)
-    return records
-
 
 def parse_args():
     parser = argparse.ArgumentParser()
@@ -187,6 +168,7 @@ def parse_args():
 
 
 def main():
+    stage = "test_infer"
     args = parse_args()
     model_path = model_path_dict[args.model_name]
     dataset_path = dataset_path_dict[args.dataset_name]
@@ -218,6 +200,7 @@ def main():
     query_examples = load_query_examples(
         tagging_config,
         split="test",
+        stage=stage,
         input_path=test_file,
         max_samples=None,
     )
@@ -234,7 +217,7 @@ def main():
         checkpoint_path=ner_checkpoint_path,
     )
 
-    test_records = load_test_records(test_file)
+    test_records = load_test_text_only(dataset_path, stage=stage)
     if len(test_records) != len(retrieval_records):
         raise ValueError(
             f"Test sample count {len(test_records)} does not match retrieval record count {len(retrieval_records)}."
@@ -257,7 +240,6 @@ def main():
         desc="Retrieval + LLM inference",
     ):
         text = test_record["text"]
-        entity_labels = test_record["entity_labels"]
         guideline_summary = build_sentence_guideline_summary(
             retrieval_record["token_retrievals"],
             max_guidelines=args.max_prompt_guidelines,
@@ -270,10 +252,6 @@ def main():
             {
                 "sample_id": test_record["sample_id"],
                 "text": text,
-                "labels": entity_labels,
-                "prompt": prompt_predict,
-                "retrieved_guideline_summary": guideline_summary,
-                "token_guideline_retrievals": retrieval_record["token_retrievals"],
             }
         )
         messages.append(message)

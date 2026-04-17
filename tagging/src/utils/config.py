@@ -112,6 +112,16 @@ def validate_config(config: dict[str, Any]) -> None:
     if float(config["training"]["learning_rate"]) <= 0:
         raise ValueError("training.learning_rate must be positive.")
 
+    data_paths = {
+        "train_path": str(config["data"]["train_path"]),
+        "validation_path": str(config["data"]["validation_path"]),
+        "test_path": str(config["data"]["test_path"]),
+    }
+    if len(set(data_paths.values())) != len(data_paths):
+        raise ValueError(
+            "data.train_path, data.validation_path, and data.test_path must point to distinct files."
+        )
+
 
 def load_config(config_path: str | Path, overrides: dict[str, Any] | None = None) -> dict[str, Any]:
     """Load, resolve, override, and validate a tagging configuration."""

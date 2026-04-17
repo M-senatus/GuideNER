@@ -15,7 +15,8 @@ except ImportError as exc:  # pragma: no cover - dependency checked in runtime e
     raise ImportError("PyTorch is required for prediction.") from exc
 
 from ..data.collators import ExportCollator
-from ..data.readers import load_ner_examples
+from ..data.readers import load_dev_data, load_test_text_only, load_train_data
+from ..data.split_guard import normalize_split, normalize_stage
 from ..data.tokenization import build_inference_features
 from ..models.deberta_token_classifier import load_checkpoint_model, load_tokenizer
 from ..train.metrics import compute_seqeval_metrics_from_sequences, ensure_seqeval_available
@@ -39,6 +40,46 @@ def _resolve_data_path(config: dict[str, Any], split: str | None, input_path: st
     if split not in split_map:
         raise ValueError(f"Unsupported split '{split}'.")
     return config["data"][split_map[split]], config["data"]["format"]
+
+
+def _default_stage_for_split(split: str) -> str:
+    normalized_split = normalize_split(split)
+    if normalized_split == "train":
+        return "train"
+    if normalized_split == "dev":
+        return "dev"
+    return "test_infer"
+
+
+def _load_examples_for_stage(
+    data_path: str,
+    input_format: str,
+    split: str,
+    stage: str,
+) -> list[Any]:
+    normalized_split = normalize_split(split)
+    normalized_stage = normalize_stage(stage)
+
+    if normalized_split == "train":
+        return load_train_data(data_path, input_format=input_format, stage=normalized_stage)
+    if normalized_split == "dev":
+        return load_dev_data(
+            data_path,
+            input_format=input_format,
+            stage=normalized_stage,
+            split_name=split,
+        )
+    if normalized_stage != "test_infer":
+        raise ValueError(
+            "Predicting on the test split requires stage='test_infer'. "
+            "Use the evaluation entrypoint for final_eval."
+        )
+    return load_test_text_only(
+        data_path,
+        input_format=input_format,
+        stage=normalized_stage,
+        split_name=split,
+    )
 
 
 def _get_device() -> torch.device:
@@ -119,19 +160,26 @@ def predict_examples(
                         "split": batch["split"][idx],
                         "source_path": batch["source_path"][idx],
                         "tokens": list(sample_tokens),
-                        "gold_tags": list(sample_gold_tags),
                         "visible_tokens": list(sample_tokens[:visible_length]),
-                        "visible_gold_tags": list(sample_gold_tags[:visible_length]),
                         "pred_tags": word_predictions,
                         "truncated": visible_length < len(sample_tokens),
                         "subword_predictions": subword_predictions,
                     }
                 )
+                if bool(batch["has_labels"][idx]):
+                    records[-1]["gold_tags"] = list(sample_gold_tags)
+                    records[-1]["visible_gold_tags"] = list(sample_gold_tags[:visible_length])
     return records
 
 
 def compute_metrics_from_prediction_records(records: list[dict[str, Any]]) -> dict[str, float]:
     """Compute seqeval metrics from prediction records with gold labels."""
+    missing_gold = [record["sample_id"] for record in records if "visible_gold_tags" not in record]
+    if missing_gold:
+        raise ValueError(
+            "Cannot compute metrics for unlabeled prediction records. "
+            f"First missing sample_id: {missing_gold[0]}"
+        )
     true_sequences = [record["visible_gold_tags"] for record in records]
     pred_sequences = [record["pred_tags"] for record in records]
     return compute_seqeval_metrics_from_sequences(true_sequences, pred_sequences)
@@ -144,6 +192,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--checkpoint-path", required=True, help="Fine-tuned checkpoint directory.")
     parser.add_argument("--split", default="test", help="Named split to predict: train/validation/test.")
     parser.add_argument("--input-path", default=None, help="Optional explicit input file path.")
+    parser.add_argument("--stage", default=None, help="Execution stage: train/dev/test_infer.")
     parser.add_argument("--batch-size", type=int, default=None, help="Override inference.batch_size.")
     parser.add_argument("--output-dir", default=None, help="Directory for prediction outputs.")
     parser.add_argument("--compute-metrics", action="store_true", help="Compute seqeval metrics when gold tags exist.")
@@ -153,11 +202,14 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     """Run standalone prediction and optionally compute metrics."""
     args = parse_args()
+    stage = args.stage or _default_stage_for_split(args.split)
+    if args.compute_metrics and normalize_stage(stage) == "test_infer":
+        raise ValueError("test_infer must not compute metrics. Use final_eval instead.")
     if args.compute_metrics:
         ensure_seqeval_available(task_name="prediction-time NER evaluation")
     config = load_config(args.config, overrides={"inference.batch_size": args.batch_size})
     data_path, input_format = _resolve_data_path(config, split=args.split, input_path=args.input_path)
-    examples = load_ner_examples(data_path, input_format=input_format, split=args.split)
+    examples = _load_examples_for_stage(data_path, input_format=input_format, split=args.split, stage=stage)
 
     checkpoint_path = str(Path(args.checkpoint_path).resolve())
     tokenizer = load_tokenizer(checkpoint_path)

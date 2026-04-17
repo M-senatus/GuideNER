@@ -17,7 +17,14 @@ def _label_sort_key(label: str) -> tuple[int, str, int]:
 
 def build_label_mappings(examples: Iterable[NERExample]) -> tuple[list[str], dict[str, int], dict[int, str]]:
     """Build deterministic label mappings from training examples."""
-    labels = sorted({tag for example in examples for tag in example.ner_tags}, key=_label_sort_key)
+    labels = set()
+    for example in examples:
+        if not example.has_labels:
+            raise ValueError(
+                f"Cannot build label mappings from unlabeled example '{example.sample_id}'."
+            )
+        labels.update(example.ner_tags)
+    labels = sorted(labels, key=_label_sort_key)
     if "O" not in labels:
         labels = ["O"] + labels
     label2id = {label: idx for idx, label in enumerate(labels)}
@@ -28,6 +35,10 @@ def build_label_mappings(examples: Iterable[NERExample]) -> tuple[list[str], dic
 def validate_example_labels(examples: Iterable[NERExample], allowed_labels: set[str]) -> None:
     """Ensure that all labels in the examples belong to an expected label set."""
     for example in examples:
+        if not example.has_labels:
+            raise ValueError(
+                f"Cannot validate label vocabulary for unlabeled example '{example.sample_id}'."
+            )
         unknown = set(example.ner_tags) - allowed_labels
         if unknown:
             raise ValueError(
@@ -37,6 +48,10 @@ def validate_example_labels(examples: Iterable[NERExample], allowed_labels: set[
 
 def extract_spans_from_bio(example: NERExample) -> list[SpanAnnotation]:
     """Extract labeled entity spans from a BIO tag sequence."""
+    if not example.has_labels:
+        raise ValueError(
+            f"Cannot extract gold spans from unlabeled example '{example.sample_id}'."
+        )
     spans: list[SpanAnnotation] = []
     start: int | None = None
     entity_type: str | None = None

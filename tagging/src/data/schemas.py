@@ -15,6 +15,7 @@ class NERExample:
     ner_tags: list[str]
     split: str
     source_path: str
+    has_labels: bool = True
 
     def __post_init__(self) -> None:
         if len(self.tokens) != len(self.ner_tags):
@@ -29,6 +30,7 @@ class NERExample:
             "sample_id": self.sample_id,
             "tokens": list(self.tokens),
             "ner_tags": list(self.ner_tags),
+            "has_labels": self.has_labels,
             "split": self.split,
             "source_path": self.source_path,
         }

@@ -18,6 +18,12 @@ def tokenize_and_align_labels(dataset: Dataset, tokenizer: Any, label2id: dict[s
     """Tokenize word-level NER data and align labels to the first subword only."""
     if not getattr(tokenizer, "is_fast", False):
         raise ValueError("A fast tokenizer is required for word alignment.")
+    if "has_labels" in dataset.column_names:
+        unlabeled_count = sum(1 for flag in dataset["has_labels"] if not flag)
+        if unlabeled_count:
+            raise ValueError(
+                f"tokenize_and_align_labels received {unlabeled_count} unlabeled examples."
+            )
 
     def _tokenize_batch(batch: dict[str, list[Any]]) -> dict[str, list[Any]]:
         tokenized = tokenizer(
@@ -74,6 +80,7 @@ def build_inference_features(examples: list[NERExample], tokenizer: Any, max_len
             "sample_id": example.sample_id,
             "split": example.split,
             "source_path": example.source_path,
+            "has_labels": example.has_labels,
             "tokens": list(example.tokens),
             "ner_tags": list(example.ner_tags),
             "input_ids": list(encoded["input_ids"]),

@@ -140,6 +140,85 @@ If the task changes experiment state, update project documentation if such files
 
 ---
 
+## Dataset split isolation
+The `train`, `dev`, and `test` splits must remain strictly isolated. These are hard constraints for any code related to data processing, training, validation, testing, caching, prompt construction, retrieval, feature engineering, preprocessing, analysis, or experiment orchestration. Do not violate them for convenience.
+
+### Allowed usage by split
+- `train` is only for model training.
+- `dev` is only for validation, hyperparameter tuning, early stopping, model selection, and intermediate analysis.
+- During training and validation work, it is allowed to read `train` and `dev` text and labels.
+
+### Test split restrictions
+- The `test` split is only for the final test workflow.
+- In `test_infer`, only raw `test` text may be read.
+- In `test_infer`, reading any `test` ground-truth field is forbidden, including entity boundaries, entity types, BIO/BIOES tags, span labels, or JSON fields such as `label` / `type`.
+- In `test_infer`, the code may only generate predictions. It must not compute metrics that depend on ground truth.
+- In `final_eval`, and only in `final_eval`, the code may read both `test` text and `test` labels in order to compute final metrics such as Precision / Recall / F1.
+- Outside `final_eval`, no code may read `test` labels for any purpose.
+
+### Forbidden access outside final test
+In any non-final-test stage, including training, validation, tuning, error analysis, sample inspection, data statistics, prompt construction, retrieval index building, rule generation, feature engineering, cache preprocessing, or any intermediate pipeline step:
+- do not read `test` text
+- do not read `test` labels
+- do not load any `test` content into memory, caches, indices, vector stores, or intermediate files
+- do not use `test` to build vocabularies, label sets, entity type descriptions, templates, examples, or prior knowledge
+
+### Required code-level enforcement
+These constraints must be enforced in code, not only in comments or documentation.
+
+#### Required data-loading interfaces
+At minimum, split data-loading entry points as follows:
+- `load_train_data()`
+- `load_dev_data()`
+- `load_test_text_only()`
+- `load_test_with_labels_for_final_eval()`
+
+Hard requirements:
+- `load_test_text_only()` must return text-only test data and must never expose label fields.
+- `load_test_with_labels_for_final_eval()` may only be called in `final_eval` mode.
+
+#### Required stage control
+Programs that may touch split data must use an explicit stage variable, for example:
+- `stage = "train"`
+- `stage = "dev"`
+- `stage = "test_infer"`
+- `stage = "final_eval"`
+
+Enforce hard checks:
+- only `stage == "test_infer"` may read test text without labels
+- only `stage == "final_eval"` may read test labels
+- any other stage that attempts to access `test` must raise an exception immediately
+
+#### No implicit leakage
+Avoid these invalid implementations:
+- reading `train` / `dev` / `test` all at startup
+- a `Dataset` or `DataLoader` that loads all splits by default
+- preprocessing `test` in advance through a shared unified preprocessing script
+- writing `test` labels into cache files or artifacts such as `pickle`, `npy`, `pt`, `json`, `faiss`, or vector stores
+- leaking `test` labels through logs, debug output, or sample printing
+
+#### Fail closed
+If the code detects any of the following, it must raise an exception and stop immediately. Do not fall back, warn-and-continue, or silently downgrade behavior:
+- a non-test stage attempts to read `test`
+- `test_infer` attempts to read `test` labels
+- any stage other than `final_eval` calls the full test loader
+
+### Code writing requirements
+When implementing or modifying related code:
+- document the permission boundary of every data-loading function
+- make test-related function names and comments explicitly distinguish text-only inference from label-based final evaluation
+- do not add test-label reading logic for debugging unless the user explicitly requests it
+- if an implementation could risk leaking test information, choose the more conservative design
+
+### Required contents in code outputs
+When providing code for data processing, training, validation, or testing, do not omit the protective logic. The code must clearly show:
+1. separate entry points for reading `train`, `dev`, and `test`
+2. separate flows for `test_infer` and `final_eval`
+3. explicit assertions or exceptions that prevent accidental test-label access
+4. hard enforcement of these protections rather than comment-only guidance
+
+---
+
 ## Validation policy
 Unless explicitly told otherwise, validate with the smallest meaningful check:
 - syntax / import check
