@@ -3,7 +3,7 @@ set -euo pipefail
 
 # Run rule_summary.py with vLLM backend.
 # Override defaults with environment variables when needed, for example:
-# CUDA_VISIBLE_DEVICES=1 MODEL_NAME=Qwen2.5-7B-Instruct DATASET_NAME=conll2003 bash run.sh
+# CUDA_DEVICES=1 MODEL_NAME=Qwen2.5-7B-Instruct DATASET_NAME=conll2003 bash run.sh
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$ROOT_DIR"
@@ -12,8 +12,9 @@ MODEL_NAME="${MODEL_NAME:-Llama-3.1-8B-Instruct}"
 DATASET_NAME="${DATASET_NAME:-conll2003}"
 TEMPERATURE="${TEMPERATURE:-0}"
 TOP_P="${TOP_P:-1}"
+CUDA_DEVICES="${CUDA_DEVICES:-0}"
 
-export CUDA_VISIBLE_DEVICES=0
+export CUDA_VISIBLE_DEVICES=$CUDA_DEVICES
 export PYTHONUNBUFFERED=1
 
 python -u rule_summary.py \
