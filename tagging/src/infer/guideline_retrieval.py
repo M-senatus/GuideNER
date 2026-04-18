@@ -389,6 +389,7 @@ def encode_examples(
     max_length: int,
     hidden_state_layer: int,
     desc: str,
+    progress_bar: Any | None = None,
 ) -> list[dict[str, Any]]:
     """Encode examples and return one pooled vector per visible word."""
     device = _get_device()
@@ -399,8 +400,12 @@ def encode_examples(
     dataloader = DataLoader(features, batch_size=batch_size, shuffle=False, collate_fn=ExportCollator(tokenizer))
 
     encoded_records: list[dict[str, Any]] = []
+    dataloader_iter = dataloader
+    if progress_bar is None:
+        dataloader_iter = tqdm(dataloader, desc=desc, leave=False)
+
     with torch.no_grad():
-        for batch in tqdm(dataloader, desc=desc, leave=False):
+        for batch in dataloader_iter:
             outputs = model(**_build_model_inputs(batch, device), output_hidden_states=True)
             hidden_states = outputs.hidden_states[hidden_state_layer].detach().cpu().numpy()
             attention_mask = batch["attention_mask"].detach().cpu()
@@ -422,6 +427,8 @@ def encode_examples(
                         "word_vectors": word_vectors,
                     }
                 )
+            if progress_bar is not None:
+                progress_bar.update(len(batch["sample_id"]))
     return encoded_records
 
 
@@ -545,6 +552,7 @@ def retrieve_guideline_records(
     hidden_state_layer: int,
     top_k: int,
     checkpoint_path: str,
+    progress_bar: Any | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     """Return token-level retrieval records in memory without writing to disk."""
     encoded_records = encode_examples(
@@ -555,6 +563,7 @@ def retrieve_guideline_records(
         max_length=max_length,
         hidden_state_layer=hidden_state_layer,
         desc="Encoding retrieval queries",
+        progress_bar=progress_bar,
     )
 
     normalized_prototypes = _normalize_rows(prototype_vectors)

@@ -152,6 +152,11 @@ def predict_batch(outputs, tokenizer, fw, batch_records):
         fw.flush()
 
 
+def run_llm_batch(messages, llm, sampling_params):
+    """Run one LLM batch without showing vLLM's internal progress bar."""
+    return llm.generate(messages, sampling_params, use_tqdm=False)
+
+
 def resolve_runtime_paths(args):
     """Resolve model, checkpoint, and prototype paths for inference-time utilities."""
     model_path = model_path_dict[args.model_name]
@@ -182,7 +187,7 @@ def build_llm_runtime(args, model_path):
     llm = LLM(
         model=model_path,
         enforce_eager=True,
-        max_model_len=8192,
+        max_model_len=32768,
     )
     sampling_params = SamplingParams(
         temperature=args.temperature,
@@ -235,7 +240,7 @@ def run_single_step_test(input_text: str, args) -> str:
     task_prompt = eval(f"{args.dataset_name}_rule_prompt")
     prompt_predict = task_prompt.format(Rules=prompt_guidelines, input_text=normalized_text)
     message = convert_userprompt_transformers(llm_tokenizer, prompt_predict, add_generation_prompt=True)
-    outputs = llm.generate([message], sampling_params)
+    outputs = run_llm_batch([message], llm, sampling_params)
     return skip_special_tokens_transformers(llm_tokenizer, outputs[0].outputs[0].text)
 
 
@@ -280,24 +285,7 @@ def main(args=None):
         input_path=test_file,
         max_samples=None,
     )
-    retrieval_records, _ = retrieve_guideline_records(
-        model=ner_model,
-        tokenizer=ner_tokenizer,
-        query_examples=query_examples,
-        prototype_vectors=prototype_vectors,
-        prototype_metadata=prototype_metadata,
-        batch_size=int(tagging_config["inference"]["batch_size"]),
-        max_length=int(tagging_config["model"]["max_length"]),
-        hidden_state_layer=int(tagging_config["export"]["hidden_state_layer"]),
-        top_k=int(args.retrieval_top_k),
-        checkpoint_path=ner_checkpoint_path,
-    )
-
     test_records = load_test_text_only(dataset_path, stage=stage)
-    if len(test_records) != len(retrieval_records):
-        raise ValueError(
-            f"Test sample count {len(test_records)} does not match retrieval record count {len(retrieval_records)}."
-        )
 
     result_file_name = (
         args.result_file
@@ -310,39 +298,65 @@ def main(args=None):
     task_prompt = eval(f"{args.dataset_name}_rule_prompt")
     messages = []
     batch_records = []
+    overall_progress = tqdm(
+        total=len(query_examples) + len(test_records),
+        desc="Overall progress | retrieve + infer",
+        unit="sample",
+        dynamic_ncols=True,
+    )
 
-    for test_record, retrieval_record in tqdm(
-        list(zip(test_records, retrieval_records)),
-        desc="Retrieval + LLM inference",
-    ):
-        text = test_record["text"]
-        guideline_summary = build_sentence_guideline_summary(
-            retrieval_record["token_retrievals"],
-            max_guidelines=args.max_prompt_guidelines,
+    try:
+        retrieval_records, _ = retrieve_guideline_records(
+            model=ner_model,
+            tokenizer=ner_tokenizer,
+            query_examples=query_examples,
+            prototype_vectors=prototype_vectors,
+            prototype_metadata=prototype_metadata,
+            batch_size=int(tagging_config["inference"]["batch_size"]),
+            max_length=int(tagging_config["model"]["max_length"]),
+            hidden_state_layer=int(tagging_config["export"]["hidden_state_layer"]),
+            top_k=int(args.retrieval_top_k),
+            checkpoint_path=ner_checkpoint_path,
+            progress_bar=overall_progress,
         )
-        prompt_guidelines = format_guidelines_for_prompt(guideline_summary)
-        prompt_predict = task_prompt.format(Rules=prompt_guidelines, input_text=text)
-        message = convert_userprompt_transformers(llm_tokenizer, prompt_predict, add_generation_prompt=True)
 
-        batch_records.append(
-            {
-                "sample_id": test_record["sample_id"],
-                "text": text,
-            }
-        )
-        messages.append(message)
+        test_records = load_test_text_only(dataset_path, stage=stage)
+        if len(test_records) != len(retrieval_records):
+            raise ValueError(
+                f"Test sample count {len(test_records)} does not match retrieval record count {len(retrieval_records)}."
+            )
 
-        if len(messages) >= args.batch_size:
-            outputs = llm.generate(messages, sampling_params)
+        for test_record, retrieval_record in zip(test_records, retrieval_records):
+            text = test_record["text"]
+            guideline_summary = build_sentence_guideline_summary(
+                retrieval_record["token_retrievals"],
+                max_guidelines=args.max_prompt_guidelines,
+            )
+            prompt_guidelines = format_guidelines_for_prompt(guideline_summary)
+            prompt_predict = task_prompt.format(Rules=prompt_guidelines, input_text=text)
+            message = convert_userprompt_transformers(llm_tokenizer, prompt_predict, add_generation_prompt=True)
+
+            batch_records.append(
+                {
+                    "sample_id": test_record["sample_id"],
+                    "text": text,
+                }
+            )
+            messages.append(message)
+            overall_progress.update(1)
+
+            if len(messages) >= args.batch_size:
+                outputs = run_llm_batch(messages, llm, sampling_params)
+                predict_batch(outputs, llm_tokenizer, fw, batch_records)
+                messages = []
+                batch_records = []
+
+        if messages:
+            outputs = run_llm_batch(messages, llm, sampling_params)
             predict_batch(outputs, llm_tokenizer, fw, batch_records)
-            messages = []
-            batch_records = []
-
-    if messages:
-        outputs = llm.generate(messages, sampling_params)
-        predict_batch(outputs, llm_tokenizer, fw, batch_records)
-
-    fw.close()
+    finally:
+        overall_progress.close()
+        fw.close()
 
 
 if __name__ == "__main__":
