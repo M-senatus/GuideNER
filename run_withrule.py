@@ -26,6 +26,7 @@ from tagging.src.models.deberta_token_classifier import (
 from tagging.src.data.schemas import NERExample
 from tagging.src.utils.config import load_config
 from guide_dataset_io import load_test_text_only
+from prompts import get_prompts
 
 
 label_pattern = r"\[\[(.*?)\]\]"
@@ -44,31 +45,6 @@ dataset_path_dict = {
     "ace05": "./datasets/ace05",
     "genia": "./datasets/genia",
 }
-
-
-conll2003_rule_prompt = """Task: Please identify Person, Organization, Location and Miscellaneous Entity from the given text and rules. 
-The rules provide an entity category followed by a list of patterns that match that category.
-
-Rules:
-{Rules}
-Please note: Patterns not included in the above are not entities.
-
-Examples:
-Input Text: EU rejects German call to boycott British lamb.
-Given the Input Text and Rules, only classify text as an entity if it matches a pattern; otherwise, it should not be classified as an entity. 
-The Output is: [["EU", "organization"], ["German", "miscellaneous"], ["British", "miscellaneous"]]
-Input Text: S&P = DENOMS ( K ) 1-10-100 SALE LIMITS US / UK / CA
-Given the Input Text and Rules, only classify text as an entity if it matches a pattern; otherwise, it should not be classified as an entity. 
-The Output is: [["Iraq", "location"], ["Saddam", "person"], ["Russia", "location"], ["Zhirinovsky", "person"]]
-Input Text: -- E. Auchard , Wall Street bureau , 212-859-1736
-Given the Input Text and Rules, only classify text as an entity if it matches a pattern; otherwise, it should not be classified as an entity. 
-The Output is: [["E. Auchard", "person"], ["Wall Street bureau", "organization"]]
-
-Identify Entities for: 
-Input Text: {input_text}
-Given the Input Text and Rules, only classify text as an entity if it matches a pattern; otherwise, it should not be classified as an entity. 
-The Output is:
-"""
 
 
 def build_sentence_guideline_summary(prototype_retrievals: list[dict], max_guidelines: int | None = None) -> list[dict]:
@@ -261,7 +237,7 @@ def run_single_step_test(input_text: str, args) -> str:
         max_guidelines=args.retrieval_top_k,
     )
     prompt_guidelines = format_guidelines_for_prompt(guideline_summary)
-    task_prompt = eval(f"{args.dataset_name}_rule_prompt")
+    task_prompt = get_prompts(args.dataset_name)["rule_infer"]
     prompt_predict = task_prompt.format(Rules=prompt_guidelines, input_text=normalized_text)
     message = convert_userprompt_transformers(llm_tokenizer, prompt_predict, add_generation_prompt=True)
     outputs = run_llm_batch([message], llm, sampling_params)
@@ -331,7 +307,7 @@ def main(args=None):
         result_fw = open(result_file_name, file_mode, encoding="utf8")
         if args.save_raw_output:
             raw_output_fw = open(raw_output_file_name, file_mode, encoding="utf8")
-        task_prompt = eval(f"{args.dataset_name}_rule_prompt")
+        task_prompt = get_prompts(args.dataset_name)["rule_infer"]
         messages = []
         batch_records = []
         overall_progress = tqdm(

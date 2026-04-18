@@ -9,6 +9,7 @@ from vllm import LLM, SamplingParams
 from transformers import AutoTokenizer
 from EasyChatTemplating.util_tools import convert_userprompt_transformers, skip_special_tokens_transformers
 from guide_dataset_io import load_train_data
+from prompts import get_prompts
 
 """
 本脚本是 GuideNER 的“规则构建”主入口，整体分为三步：
@@ -52,51 +53,6 @@ dataset_path_dict = {"conll2003": "./datasets/conll2003",
                      "genia": "./datasets/genia"}
 
 # 规则抽取 prompt：输入一条训练样本及其标注，让 LLM 总结“泛化规则”而不是复述具体实体名。
-conll2003_prompt = """Task: Summarize the generic rules for each named entity category for the named entity recognition task based on the provided text and their corresponding annotations. The output must be structured in JSON format, where the keys represent the entity categories, and the values are lists of rules that have been summarized from the input text and their annotations.
-
-Guidelines: 
-(1) Avoid including specific entity names in the output and instead describe general patterns or features. 
-(2) Only summarize rules for the entity categories that appear in the provided annotations. Do not include rules for any other categories.
-(3) For each annotation provided, generate exactly one summarized rule corresponding to that label.
-(4) The order of the summarized rules should strictly correspond to the order of the annotations, and the number of summarized rules must match the number of annotations.
-
-Examples: 
-Input Text: EU rejects German call to boycott British lamb . 
-Annotations: [["EU", "organization"], ["German", "miscellaneous"], ["British", "miscellaneous"]]. 
-Output: {{"organization": ["union"], "miscellaneous": ["ethnic groups", "ethnic groups"]}}
-Input Text: Iraq 's Saddam meets Russia 's Zhirinovsky .
-Annotations: [["Iraq", "location"], ["Saddam", "person"], ["Russia", "location"], ["Zhirinovsky", "person"]]
-Output: {{"location": ["country", "country"], "person": ["name", "name"]}}
-Input Text: S&P = DENOMS ( K ) 1-10-100 SALE LIMITS US / UK / CA
-Annotations: [["S&P", "organization"], ["US", "location"], ["UK", "location"], ["CA", "location"]]
-Output: {{"organization": ["financial institution"], "location": ["country", "country", "country"]}}
-
-Summarize for:
-Input Text: {input_text}
-Annotations: {input_annotations}
-Output:
-"""
-
-conll2003_valid_prompt= """Task: Please identify Person, Organization, Location and Miscellaneous Entity from the given text and rules.
-The rules are in JSON format where the key is the entity category and the value is the schema contained in that category.
-
-Examples:
-Input Text: EU rejects German call to boycott British lamb.
-Rules: {{"organization": ["union"], "miscellaneous": ["nationality"]}}
-Output: [["EU", "organization"], ["German", "miscellaneous"], ["British", "miscellaneous"]]
-Input Text: S&P = DENOMS ( K ) 1-10-100 SALE LIMITS US / UK / CA
-Rules: {{"organization": ["financial institution"], "location": ["country", "country", "country"]}}
-Output: [["Iraq", "location"], ["Saddam", "person"], ["Russia", "location"], ["Zhirinovsky", "person"]]
-Input Text: -- E. Auchard , Wall Street bureau , 212-859-1736
-Rules: {{"person": ["journalist"], "organization": ["newspaper bureau"]}}
-Output: [["E. Auchard", "person"], ["Wall Street bureau", "organization"]]
-
-Instructions:
-
-Input Text: {input_text}
-Rules: {summarized_rules}
-Output:
-"""
 
 # 检查真实标注 labels 与 LLM 预测出的规则字典 result 是否在“数量”和“类别分布”上对齐。
 # 这里不检查规则内容是否合理，只检查每个实体类别的条数是否能一一对应。
@@ -535,8 +491,9 @@ def main():
     texts = []
     labels = []
     
-    task_prompt = eval(f"{args.dataset_name}_prompt")
-    valid_prompt = eval(f"{args.dataset_name}_valid_prompt")
+    prompts = get_prompts(args.dataset_name)
+    task_prompt = prompts["rule_summary"]
+    valid_prompt = prompts["rule_validate"]
     train_records = load_train_data(dataset_path, stage=stage)
     overall_progress = tqdm(
         total=len(train_records),
