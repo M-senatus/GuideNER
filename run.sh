@@ -23,6 +23,7 @@ TOP_P="${TOP_P:-1}"
 RETRIEVAL_TOP_K="${RETRIEVAL_TOP_K:-10}"
 CUDA_DEVICES="${CUDA_DEVICES:-0}"
 RESULT_FILE="${RESULT_FILE:-}"
+SAVE_RAW_OUTPUT="${SAVE_RAW_OUTPUT:-0}"
 PROTOTYPE_DIR="${PROTOTYPE_DIR:-prototypes/${MODEL_NAME}-${DATASET_NAME}-prototypes}"
 
 usage() {
@@ -49,12 +50,15 @@ Environment overrides:
   TOP_P          Generation top-p (default: 1)
   CUDA_DEVICES   CUDA device ids (default: 0)
   RESULT_FILE    Output JSONL path for final predictions (default: inferred by Python)
+  SAVE_RAW_OUTPUT
+                 Save companion raw LLM output JSONL during infer (default: 1)
   PROTOTYPE_DIR  Retrieved-guideline prototype directory
 
 Examples:
   bash run.sh summary
   MODEL_NAME=Qwen2.5-7B-Instruct bash run.sh summary
   DATASET_NAME=ace05 CUDA_DEVICES=1 bash run.sh infer
+  SAVE_RAW_OUTPUT=0 bash run.sh infer
   bash run.sh single-test --single_test_input_text "EU rejects German call to boycott British lamb."
   RESULT_FILE=datasets/conll2003/custom_result.jsonl bash run.sh evaluate
 EOF
@@ -72,6 +76,22 @@ require_dir() {
     echo "Required directory not found: $1" >&2
     exit 1
   fi
+}
+
+should_save_raw_output() {
+  case "${SAVE_RAW_OUTPUT,,}" in
+    1|true|yes|on)
+      return 0
+      ;;
+    0|false|no|off)
+      return 1
+      ;;
+    *)
+      echo "Invalid SAVE_RAW_OUTPUT value: $SAVE_RAW_OUTPUT" >&2
+      echo "Use one of: 1, 0, true, false, yes, no, on, off" >&2
+      exit 1
+      ;;
+  esac
 }
 
 if [[ $# -lt 1 ]]; then
@@ -110,6 +130,9 @@ case "$COMMAND" in
       --ner_checkpoint_path "../model/deberta-v3-base/deberta_ner_${DATASET_NAME}/checkpoint-best"
       --prototype_dir "$PROTOTYPE_DIR"
     )
+    if should_save_raw_output; then
+      infer_args+=(--save_raw_output)
+    fi
     if [[ -n "$RESULT_FILE" ]]; then
       infer_args+=(--result_file "$RESULT_FILE")
     fi
