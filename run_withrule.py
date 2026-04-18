@@ -152,7 +152,7 @@ def write_jsonl_record(file_handle, record: dict) -> None:
 
 
 def predict_batch(outputs, tokenizer, result_fw, raw_output_fw, batch_records):
-    """Write one batch of structured predictions plus raw LLM text outputs."""
+    """Write one batch of structured predictions and optional raw LLM text outputs."""
     for output, record in zip(outputs, batch_records):
         generated_text = skip_special_tokens_transformers(tokenizer, output.outputs[0].text)
         status, labels = parse_prediction(generated_text)
@@ -172,7 +172,8 @@ def predict_batch(outputs, tokenizer, result_fw, raw_output_fw, batch_records):
         }
 
         write_jsonl_record(result_fw, result_dict)
-        write_jsonl_record(raw_output_fw, raw_output_dict)
+        if raw_output_fw is not None:
+            write_jsonl_record(raw_output_fw, raw_output_dict)
 
 
 def run_llm_batch(messages, llm, sampling_params):
@@ -285,11 +286,7 @@ def parse_args():
     parser.add_argument("--ner_checkpoint_path", default=None)
     parser.add_argument("--prototype_dir", default=None)
     parser.add_argument("--result_file", default=None)
-    parser.add_argument(
-        "--raw_output_file",
-        default=None,
-        help="Optional JSONL path that stores the raw text output from the inference LLM for each test sample.",
-    )
+    parser.add_argument("--save_raw_output", action="store_true")
     parser.add_argument(
         "--single_test_input_text",
         default=None,
@@ -324,11 +321,7 @@ def main(args=None):
         if args.result_file
         else build_default_result_file(dataset_path, prototype_summary, args.model_name)
     )
-    raw_output_file_name = (
-        args.raw_output_file
-        if args.raw_output_file
-        else build_default_raw_output_file(result_file_name)
-    )
+    raw_output_file_name = build_default_raw_output_file(result_file_name)
     file_mode = "a" if args.append else "w"
     result_fw = None
     raw_output_fw = None
@@ -336,7 +329,8 @@ def main(args=None):
 
     try:
         result_fw = open(result_file_name, file_mode, encoding="utf8")
-        raw_output_fw = open(raw_output_file_name, file_mode, encoding="utf8")
+        if args.save_raw_output:
+            raw_output_fw = open(raw_output_file_name, file_mode, encoding="utf8")
         task_prompt = eval(f"{args.dataset_name}_rule_prompt")
         messages = []
         batch_records = []
