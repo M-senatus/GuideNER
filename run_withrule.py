@@ -30,6 +30,7 @@ from prompts import get_prompts
 
 
 label_pattern = r"\[\[(.*?)\]\]"
+single_label_pattern = r'\[\s*"(?:\\.|[^"\\])*"\s*,\s*"(?:\\.|[^"\\])*"\s*\]'
 MODEL_ROOT = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "model"))
 DEFAULT_MODEL_NAME = "Llama-3.1-8B-Instruct"
 DEFAULT_TAGGING_CONFIG = os.path.join("tagging", "configs", "deberta_ner_conll2003.json")
@@ -84,20 +85,105 @@ def format_guidelines_for_prompt(guideline_summary: list[dict]) -> str:
     return "\n".join(lines)
 
 
+def _is_label_pair(value) -> bool:
+    """Return True when value is exactly one [entity_text, entity_type] pair."""
+    return (
+        isinstance(value, list)
+        and len(value) == 2
+        and all(isinstance(item, str) for item in value)
+    )
+
+
+def _try_parse_literal(text: str):
+    """Try JSON first, then Python literal syntax for model outputs."""
+    stripped = text.strip()
+    if not stripped:
+        return None
+
+    for parser in (json.loads, ast.literal_eval):
+        try:
+            return parser(stripped)
+        except (json.JSONDecodeError, SyntaxError, ValueError, TypeError):
+            continue
+    return None
+
+
+def _normalize_prediction_labels(value, max_depth: int = 4) -> list | None:
+    """Recover a strict [[text, type], ...] structure from common wrapped outputs."""
+    current = value
+    for _ in range(max_depth):
+        if isinstance(current, str):
+            parsed = _try_parse_literal(current)
+            if parsed is None:
+                return None
+            current = parsed
+            continue
+
+        if not isinstance(current, list):
+            return None
+
+        if not current:
+            return []
+
+        if _is_label_pair(current):
+            return [current]
+
+        normalized_labels = []
+        for item in current:
+            if _is_label_pair(item):
+                normalized_labels.append(item)
+                continue
+
+            if isinstance(item, str):
+                parsed_item = _normalize_prediction_labels(item, max_depth=max_depth - 1)
+                if parsed_item is None:
+                    return None
+                normalized_labels.extend(parsed_item)
+                continue
+
+            return None
+
+        return normalized_labels
+
+    return None
+
+
 def parse_prediction(text: str) -> tuple[str, list]:
-    """Parse a model prediction into status plus structured labels."""
-    result = re.search(label_pattern, text, re.DOTALL)
-    if result is None:
-        return "none_wrong", []
+    """Parse a model prediction into status plus structured labels.
 
-    try:
-        parsed = ast.literal_eval(result.group())
-    except (SyntaxError, ValueError):
-        return "eval_wrong", []
+    The parser stays strict about the final structure, but it tolerates two
+    common wrapper errors from LLMs:
+    1. the whole JSON array is returned as a quoted string
+    2. a single [text, type] pair is returned without the outer list
+    """
+    candidates = []
+    stripped_text = text.strip()
+    if stripped_text:
+        candidates.append(stripped_text)
 
-    if not isinstance(parsed, list):
+    list_match = re.search(label_pattern, text, re.DOTALL)
+    if list_match is not None:
+        candidates.append(list_match.group())
+
+    pair_match = re.search(single_label_pattern, text, re.DOTALL)
+    if pair_match is not None:
+        candidates.append(pair_match.group())
+
+    seen_candidates = set()
+    attempted_structured_parse = False
+    for candidate in candidates:
+        if candidate in seen_candidates:
+            continue
+        seen_candidates.add(candidate)
+        attempted_structured_parse = attempted_structured_parse or ("[" in candidate and "]" in candidate)
+
+        parsed = _normalize_prediction_labels(candidate)
+        if parsed is not None:
+            return "success", parsed
+
+    if attempted_structured_parse or ("[" in text and "]" in text):
         return "eval_wrong", []
-    return "success", parsed
+    return "none_wrong", []
 
 
 def build_default_result_file(dataset_path: str, prototype_summary: dict, entity_model_name: str) -> str:
