@@ -1,0 +1,8 @@
+{
+  "prototype_count": 80,
+  "hidden_size": 768,
+  "guideline_path": "/home/maj/GuideNER/datasets/conll2003/Llama-3.1-8B-Instruct_summaryrules.json",
+  "checkpoint_path": "/home/maj/model/deberta-v3-base/deberta_ner_conll2003/checkpoint-best",
+  "instance_count": 1219,
+  "encoded_instance_count": 1219
+}

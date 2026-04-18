@@ -250,7 +250,7 @@ def parse_args():
     parser.add_argument("--model_name", default=DEFAULT_MODEL_NAME, choices=list(model_path_dict.keys()))
     parser.add_argument("--temperature", default=0.8, type=float)
     parser.add_argument("--top_p", default=0.95, type=float)
-    parser.add_argument("--max_tokens", default=256, type=int)
+    parser.add_argument("--max_tokens", default=1024, type=int)
     parser.add_argument("--batch_size", default=32, type=int)
     parser.add_argument("--retrieval_top_k", default=3, type=int)
     parser.add_argument("--max_prompt_guidelines", default=24, type=int)
