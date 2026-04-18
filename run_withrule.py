@@ -179,7 +179,11 @@ def resolve_runtime_paths(args):
 def build_llm_runtime(args, model_path):
     """Initialize the LLM, tokenizer, and decoding parameters."""
     llm_tokenizer = AutoTokenizer.from_pretrained(model_path)
-    llm = LLM(model=model_path)
+    llm = LLM(
+        model=model_path,
+        enforce_eager=True,
+        max_model_len=8192,
+    )
     sampling_params = SamplingParams(
         temperature=args.temperature,
         top_p=args.top_p,
