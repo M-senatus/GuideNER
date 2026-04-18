@@ -103,6 +103,14 @@ Main output:
 
 - `datasets/conll2003/Llama-3.1-8B-Instruct_withrule_retrieval_result_detail.jsonl`
 
+### 4b. Run a single-step debug inference
+
+Use the dedicated wrapper command below when you want to inspect one custom `input_text` without writing the full test-set JSONL output.
+
+```bash
+bash run.sh single-test --single_test_input_text "EU rejects German call to boycott British lamb."
+```
+
 ### 5. Compute the final test results
 
 This step is the only stage that reads test labels and computes the final Precision / Recall / F1.
@@ -121,6 +129,7 @@ The repository also provides shell wrappers for the two main sub-pipelines:
 ```bash
 bash run.sh summary
 bash run.sh infer
+bash run.sh single-test --single_test_input_text "EU rejects German call to boycott British lamb."
 bash run.sh evaluate
 bash tagging/run.sh train
 bash tagging/run.sh guideline-build \

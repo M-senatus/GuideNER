@@ -20,6 +20,7 @@ from tagging.src.models.deberta_token_classifier import (
     load_checkpoint_model,
     load_tokenizer as load_ner_tokenizer,
 )
+from tagging.src.data.schemas import NERExample
 from tagging.src.utils.config import load_config
 from guide_dataset_io import load_test_text_only
 
@@ -150,31 +151,11 @@ def predict_batch(outputs, tokenizer, fw, batch_records):
         fw.write("\n")
         fw.flush()
 
-def parse_args():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--dataset_name", default="conll2003", choices=["conll2003", "ace04", "ace05", "genia"])
-    parser.add_argument("--model_name", default=DEFAULT_MODEL_NAME, choices=list(model_path_dict.keys()))
-    parser.add_argument("--temperature", default=0.8, type=float)
-    parser.add_argument("--top_p", default=0.95, type=float)
-    parser.add_argument("--max_tokens", default=256, type=int)
-    parser.add_argument("--batch_size", default=32, type=int)
-    parser.add_argument("--retrieval_top_k", default=3, type=int)
-    parser.add_argument("--max_prompt_guidelines", default=24, type=int)
-    parser.add_argument("--tagging_config", default=DEFAULT_TAGGING_CONFIG)
-    parser.add_argument("--ner_checkpoint_path", default=None)
-    parser.add_argument("--prototype_dir", default=None)
-    parser.add_argument("--result_file", default=None)
-    parser.add_argument("--append", action="store_true")
-    return parser.parse_args()
 
-
-def main():
-    stage = "test_infer"
-    args = parse_args()
+def resolve_runtime_paths(args):
+    """Resolve model, checkpoint, and prototype paths for inference-time utilities."""
     model_path = model_path_dict[args.model_name]
     dataset_path = dataset_path_dict[args.dataset_name]
-    test_file = os.path.join(dataset_path, "test.jsonl")
-
     tagging_config = load_config(args.tagging_config)
     ner_checkpoint_path = (
         str(Path(args.ner_checkpoint_path).resolve())
@@ -192,20 +173,98 @@ def main():
             ).resolve()
         )
     )
+    return model_path, dataset_path, tagging_config, ner_checkpoint_path, prototype_dir
 
+
+def build_llm_runtime(args, model_path):
+    """Initialize the LLM, tokenizer, and decoding parameters."""
     llm_tokenizer = AutoTokenizer.from_pretrained(model_path)
-    # Default to eager mode because newer vLLM / PyTorch / Triton stacks can
-    # fail during compile-time kernel generation on some CUDA environments.
-    llm = LLM(
-        model=model_path,
-        enforce_eager=True,
-        max_model_len=8192,
-    )
+    llm = LLM(model=model_path)
     sampling_params = SamplingParams(
         temperature=args.temperature,
         top_p=args.top_p,
         max_tokens=args.max_tokens,
     )
+    return llm_tokenizer, llm, sampling_params
+
+
+def run_single_step_test(input_text: str, args) -> str:
+    """Run one ad-hoc text example through retrieval plus LLM generation."""
+    normalized_text = input_text.strip()
+    if not normalized_text:
+        raise ValueError("single-step test input_text must not be empty.")
+
+    model_path, _, tagging_config, ner_checkpoint_path, prototype_dir = resolve_runtime_paths(args)
+    llm_tokenizer, llm, sampling_params = build_llm_runtime(args, model_path)
+
+    ner_tokenizer = load_ner_tokenizer(ner_checkpoint_path)
+    ner_model = load_checkpoint_model(ner_checkpoint_path, output_hidden_states=True)
+    prototype_vectors, prototype_metadata, _ = load_saved_prototypes(prototype_dir)
+
+    # Keep the ad-hoc debug path text-only and unlabeled.
+    query_example = NERExample(
+        sample_id="single-step-input",
+        tokens=normalized_text.split(),
+        ner_tags=["O"] * len(normalized_text.split()),
+        split="adhoc",
+        source_path="<single_test_input>",
+        has_labels=False,
+    )
+    retrieval_records, _ = retrieve_guideline_records(
+        model=ner_model,
+        tokenizer=ner_tokenizer,
+        query_examples=[query_example],
+        prototype_vectors=prototype_vectors,
+        prototype_metadata=prototype_metadata,
+        batch_size=1,
+        max_length=int(tagging_config["model"]["max_length"]),
+        hidden_state_layer=int(tagging_config["export"]["hidden_state_layer"]),
+        top_k=int(args.retrieval_top_k),
+        checkpoint_path=ner_checkpoint_path,
+    )
+
+    guideline_summary = build_sentence_guideline_summary(
+        retrieval_records[0]["token_retrievals"],
+        max_guidelines=args.max_prompt_guidelines,
+    )
+    prompt_guidelines = format_guidelines_for_prompt(guideline_summary)
+    task_prompt = eval(f"{args.dataset_name}_rule_prompt")
+    prompt_predict = task_prompt.format(Rules=prompt_guidelines, input_text=normalized_text)
+    message = convert_userprompt_transformers(llm_tokenizer, prompt_predict, add_generation_prompt=True)
+    outputs = llm.generate([message], sampling_params)
+    return skip_special_tokens_transformers(llm_tokenizer, outputs[0].outputs[0].text)
+
+
+def parse_args():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--dataset_name", default="conll2003", choices=["conll2003", "ace04", "ace05", "genia"])
+    parser.add_argument("--model_name", default=DEFAULT_MODEL_NAME, choices=list(model_path_dict.keys()))
+    parser.add_argument("--temperature", default=0.8, type=float)
+    parser.add_argument("--top_p", default=0.95, type=float)
+    parser.add_argument("--max_tokens", default=256, type=int)
+    parser.add_argument("--batch_size", default=32, type=int)
+    parser.add_argument("--retrieval_top_k", default=3, type=int)
+    parser.add_argument("--max_prompt_guidelines", default=24, type=int)
+    parser.add_argument("--tagging_config", default=DEFAULT_TAGGING_CONFIG)
+    parser.add_argument("--ner_checkpoint_path", default=None)
+    parser.add_argument("--prototype_dir", default=None)
+    parser.add_argument("--result_file", default=None)
+    parser.add_argument(
+        "--single_test_input_text",
+        default=None,
+        help="Run one ad-hoc input_text through retrieval plus LLM generation and print the raw model output.",
+    )
+    parser.add_argument("--append", action="store_true")
+    return parser.parse_args()
+
+
+def main(args=None):
+    stage = "test_infer"
+    args = parse_args() if args is None else args
+    model_path, dataset_path, tagging_config, ner_checkpoint_path, prototype_dir = resolve_runtime_paths(args)
+    test_file = os.path.join(dataset_path, "test.jsonl")
+
+    llm_tokenizer, llm, sampling_params = build_llm_runtime(args, model_path)
 
     ner_tokenizer = load_ner_tokenizer(ner_checkpoint_path)
     ner_model = load_checkpoint_model(ner_checkpoint_path, output_hidden_states=True)
@@ -283,4 +342,17 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    cli_args = parse_args()
+
+
+    def single_step_test(input_text: str) -> str:
+        """Debug one input_text from the command line and print the raw model output."""
+        generated_text = run_single_step_test(input_text, cli_args)
+        print(generated_text)
+        return generated_text
+
+
+    if cli_args.single_test_input_text is not None:
+        single_step_test(cli_args.single_test_input_text)
+    else:
+        main(cli_args)

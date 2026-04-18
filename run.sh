@@ -4,6 +4,7 @@ set -euo pipefail
 # Run one repository-root pipeline stage at a time:
 # 1) summarize rules from the training set
 # 4) run text-only test inference with retrieved guidelines
+# 4b) run one ad-hoc single-step test example
 # 5) compute final test metrics from the saved predictions
 #
 # The inference stage depends on the fine-tuned NER checkpoint and guideline
@@ -28,12 +29,15 @@ usage() {
 Usage:
   bash run.sh summary [extra args...]
   bash run.sh infer [extra args...]
+  bash run.sh single-test [extra args...]
   bash run.sh evaluate [extra args...]
   bash run.sh help
 
 This script runs one repository-root stage per invocation:
   summary   Generate summary rules from the training split
-  infer     Run text-only test inference with retrieved guidelines
+  infer     Run full text-only test inference with retrieved guidelines
+  single-test
+            Run one ad-hoc input_text through retrieval plus LLM generation
   evaluate  Compute final metrics from saved predictions
 
 Environment overrides:
@@ -50,6 +54,7 @@ Examples:
   bash run.sh summary
   MODEL_NAME=Qwen2.5-7B-Instruct bash run.sh summary
   DATASET_NAME=ace05 CUDA_DEVICES=1 bash run.sh infer
+  bash run.sh single-test --single_test_input_text "EU rejects German call to boycott British lamb."
   RESULT_FILE=datasets/conll2003/custom_result.jsonl bash run.sh evaluate
 EOF
 }
@@ -103,6 +108,22 @@ case "$COMMAND" in
       --ner_checkpoint_path "../model/deberta-v3-base/deberta_ner_${DATASET_NAME}/checkpoint-best" \
       --prototype_dir "$PROTOTYPE_DIR" \
       --result_file "$RESULT_FILE" \
+      "$@"
+    ;;
+
+  single-test)
+    require_file "tagging/configs/deberta_ner_${DATASET_NAME}.json"
+    require_dir "../model/deberta-v3-base/deberta_ner_${DATASET_NAME}/checkpoint-best"
+    require_dir "$PROTOTYPE_DIR"
+
+    "$PYTHON_BIN" -u run_withrule.py \
+      --dataset_name "$DATASET_NAME" \
+      --model_name "$MODEL_NAME" \
+      --temperature "$TEMPERATURE" \
+      --top_p "$TOP_P" \
+      --tagging_config "tagging/configs/deberta_ner_${DATASET_NAME}.json" \
+      --ner_checkpoint_path "../model/deberta-v3-base/deberta_ner_${DATASET_NAME}/checkpoint-best" \
+      --prototype_dir "$PROTOTYPE_DIR" \
       "$@"
     ;;
 
