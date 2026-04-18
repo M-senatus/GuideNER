@@ -20,6 +20,7 @@ MODEL_NAME="${MODEL_NAME:-Llama-3.1-8B-Instruct}"
 DATASET_NAME="${DATASET_NAME:-conll2003}"
 TEMPERATURE="${TEMPERATURE:-0}"
 TOP_P="${TOP_P:-1}"
+RETRIEVAL_TOP_K="${RETRIEVAL_TOP_K:-10}"
 CUDA_DEVICES="${CUDA_DEVICES:-0}"
 RESULT_FILE="${RESULT_FILE:-datasets/${DATASET_NAME}/${MODEL_NAME}_withrule_retrieval_result_detail.jsonl}"
 PROTOTYPE_DIR="${PROTOTYPE_DIR:-prototypes/${MODEL_NAME}-${DATASET_NAME}-prototypes}"
@@ -104,6 +105,7 @@ case "$COMMAND" in
       --model_name "$MODEL_NAME" \
       --temperature "$TEMPERATURE" \
       --top_p "$TOP_P" \
+      --retrieval_top_k "$RETRIEVAL_TOP_K" \
       --tagging_config "tagging/configs/deberta_ner_${DATASET_NAME}.json" \
       --ner_checkpoint_path "../model/deberta-v3-base/deberta_ner_${DATASET_NAME}/checkpoint-best" \
       --prototype_dir "$PROTOTYPE_DIR" \
@@ -121,6 +123,7 @@ case "$COMMAND" in
       --model_name "$MODEL_NAME" \
       --temperature "$TEMPERATURE" \
       --top_p "$TOP_P" \
+      --retrieval_top_k "$RETRIEVAL_TOP_K" \
       --tagging_config "tagging/configs/deberta_ner_${DATASET_NAME}.json" \
       --ner_checkpoint_path "../model/deberta-v3-base/deberta_ner_${DATASET_NAME}/checkpoint-best" \
       --prototype_dir "$PROTOTYPE_DIR" \

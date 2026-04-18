@@ -104,7 +104,7 @@ This is the inference stage. It:
 
 1. loads saved prototype vectors and metadata
 2. encodes each token in the query split at the word level
-3. retrieves top-k guideline prototypes for every token
+3. aggregates sentence-wide prototype matches and returns top-k guideline prototypes for each sentence
 
 Example:
 
@@ -118,6 +118,10 @@ Outputs are written under `.../guideline_retrieval/retrieval/<split>/` with:
 - `results.jsonl`
 - `summary.json`
 - `retrieve_summary.json`
+
+Each `results.jsonl` record keeps sentence metadata plus `prototype_retrievals`, where every hit contains the
+retrieved prototype metadata, the sentence-level max score, and the strongest matching `matched_tokens` /
+`matched_word_indices` for that prototype.
 
 ## Minimal Smoke-Test Example
 

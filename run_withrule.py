@@ -68,33 +68,20 @@ The Output is:
 """
 
 
-def _normalize_text_token(token_text: str) -> str:
-    """Normalize a matched token for concise prompt display."""
-    return token_text.strip()
-
-
-def build_sentence_guideline_summary(token_retrievals: list[dict], max_guidelines: int | None = None) -> list[dict]:
-    """Merge token-level top-k retrievals into a sentence-level guideline summary."""
-    merged: dict[tuple[str, str], dict] = {}
-    for token_record in token_retrievals:
-        token_text = _normalize_text_token(token_record["token_text"])
-        for hit in token_record["top_k"]:
-            key = (str(hit["entity_type"]).lower(), str(hit["rule_text"]))
-            entry = merged.setdefault(
-                key,
-                {
-                    "entity_type": str(hit["entity_type"]).lower(),
-                    "rule_text": str(hit["rule_text"]),
-                    "best_score": float(hit["score"]),
-                    "support_examples": list(hit.get("support_examples", [])),
-                    "matched_tokens": [],
-                },
-            )
-            entry["best_score"] = max(entry["best_score"], float(hit["score"]))
-            if token_text and token_text not in entry["matched_tokens"]:
-                entry["matched_tokens"].append(token_text)
-
-    summary = sorted(merged.values(), key=lambda item: item["best_score"], reverse=True)
+def build_sentence_guideline_summary(prototype_retrievals: list[dict], max_guidelines: int | None = None) -> list[dict]:
+    """Normalize sentence-level prototype retrievals for prompt construction."""
+    summary = [
+        {
+            "entity_type": str(item["entity_type"]).lower(),
+            "rule_text": str(item["rule_text"]),
+            "best_score": float(item["score"]),
+            "support_examples": list(item.get("support_examples", [])),
+            "matched_tokens": list(item.get("matched_tokens", [])),
+            "matched_word_indices": list(item.get("matched_word_indices", [])),
+            "best_word_index": item.get("best_word_index"),
+        }
+        for item in prototype_retrievals
+    ]
     if max_guidelines is not None:
         summary = summary[: max(0, int(max_guidelines))]
     return summary
@@ -233,8 +220,8 @@ def run_single_step_test(input_text: str, args) -> str:
     )
 
     guideline_summary = build_sentence_guideline_summary(
-        retrieval_records[0]["token_retrievals"],
-        max_guidelines=args.max_prompt_guidelines,
+        retrieval_records[0]["prototype_retrievals"],
+        max_guidelines=args.retrieval_top_k,
     )
     prompt_guidelines = format_guidelines_for_prompt(guideline_summary)
     task_prompt = eval(f"{args.dataset_name}_rule_prompt")
@@ -252,8 +239,12 @@ def parse_args():
     parser.add_argument("--top_p", default=0.95, type=float)
     parser.add_argument("--max_tokens", default=1024, type=int)
     parser.add_argument("--batch_size", default=32, type=int)
-    parser.add_argument("--retrieval_top_k", default=3, type=int)
-    parser.add_argument("--max_prompt_guidelines", default=24, type=int)
+    parser.add_argument(
+        "--retrieval_top_k",
+        default=10,
+        type=int,
+        help="Number of retrieved guideline prototypes to keep and include in the prompt.",
+    )
     parser.add_argument("--tagging_config", default=DEFAULT_TAGGING_CONFIG)
     parser.add_argument("--ner_checkpoint_path", default=None)
     parser.add_argument("--prototype_dir", default=None)
@@ -329,8 +320,8 @@ def main(args=None):
         for test_record, retrieval_record in zip(test_records, retrieval_records):
             text = test_record["text"]
             guideline_summary = build_sentence_guideline_summary(
-                retrieval_record["token_retrievals"],
-                max_guidelines=args.max_prompt_guidelines,
+                retrieval_record["prototype_retrievals"],
+                max_guidelines=args.retrieval_top_k,
             )
             prompt_guidelines = format_guidelines_for_prompt(guideline_summary)
             prompt_predict = task_prompt.format(Rules=prompt_guidelines, input_text=text)

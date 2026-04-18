@@ -554,7 +554,7 @@ def retrieve_guideline_records(
     checkpoint_path: str,
     progress_bar: Any | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-    """Return token-level retrieval records in memory without writing to disk."""
+    """Return sentence-level prototype retrieval records in memory without writing to disk."""
     encoded_records = encode_examples(
         model=model,
         tokenizer=tokenizer,
@@ -569,44 +569,52 @@ def retrieve_guideline_records(
     normalized_prototypes = _normalize_rows(prototype_vectors)
     retrieval_records: list[dict[str, Any]] = []
     total_visible_tokens = 0
+    k = min(max(1, int(top_k)), len(prototype_metadata))
 
     for record in encoded_records:
         word_vectors = record["word_vectors"]
         visible_word_indices = sorted(word_vectors.keys())
-        token_retrievals: list[dict[str, Any]] = []
+        sentence_hits: dict[int, dict[str, Any]] = {}
 
         for word_index in visible_word_indices:
             query_vector = word_vectors[word_index].astype(np.float32, copy=False).reshape(1, -1)
             scores = (normalized_prototypes @ _normalize_rows(query_vector).reshape(-1)).astype(np.float32)
-            k = min(max(1, int(top_k)), len(prototype_metadata))
-            top_indices = np.argsort(-scores)[:k]
-
-            hits = []
-            for rank, prototype_index in enumerate(top_indices, start=1):
-                metadata = prototype_metadata[int(prototype_index)]
-                hits.append(
-                    {
-                        "rank": rank,
-                        "score": float(scores[int(prototype_index)]),
+            token_text = record["tokens"][word_index]
+            for prototype_index, score in enumerate(scores):
+                score_value = float(score)
+                if prototype_index not in sentence_hits:
+                    metadata = prototype_metadata[prototype_index]
+                    sentence_hits[prototype_index] = {
+                        "score": score_value,
                         "prototype_index": int(prototype_index),
                         "entity_type": metadata["entity_type"],
                         "rule_text": metadata["rule_text"],
                         "support_examples": metadata["support_examples"],
                         "num_support_examples": metadata["num_support_examples"],
+                        # Keep only the strongest matching word positions for each prototype.
+                        "matched_tokens": [token_text],
+                        "matched_word_indices": [word_index],
+                        "best_word_index": word_index,
                     }
-                )
+                    continue
 
-            token_retrievals.append(
-                {
-                        "word_index": word_index,
-                        "token_text": record["tokens"][word_index],
-                        "top_k": hits,
-                    }
-                )
-            if record["has_labels"] and word_index < len(record["ner_tags"]):
-                token_retrievals[-1]["gold_tag"] = record["ner_tags"][word_index]
+                entry = sentence_hits[prototype_index]
+                if score_value > entry["score"]:
+                    entry["score"] = score_value
+                    entry["best_word_index"] = word_index
+                    entry["matched_tokens"] = [token_text]
+                    entry["matched_word_indices"] = [word_index]
+                elif np.isclose(score_value, entry["score"], rtol=1e-5, atol=1e-8):
+                    if word_index not in entry["matched_word_indices"]:
+                        entry["matched_word_indices"].append(word_index)
+                    if token_text not in entry["matched_tokens"]:
+                        entry["matched_tokens"].append(token_text)
 
-        total_visible_tokens += len(token_retrievals)
+        prototype_retrievals = sorted(sentence_hits.values(), key=lambda item: item["score"], reverse=True)[:k]
+        for rank, hit in enumerate(prototype_retrievals, start=1):
+            hit["rank"] = rank
+
+        total_visible_tokens += len(visible_word_indices)
         retrieval_records.append(
             {
                 "sample_id": record["sample_id"],
@@ -616,7 +624,7 @@ def retrieve_guideline_records(
                 "tokens": record["tokens"],
                 "visible_tokens": [record["tokens"][idx] for idx in visible_word_indices],
                 "truncated": len(visible_word_indices) < len(record["tokens"]),
-                "token_retrievals": token_retrievals,
+                "prototype_retrievals": prototype_retrievals,
             }
         )
         if record["has_labels"]:
