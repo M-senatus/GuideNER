@@ -134,8 +134,25 @@ def build_default_result_file(dataset_path: str, prototype_summary: dict, entity
     return os.path.join(dataset_path, f"{guideline_model_name}_word-level_{entity_model_name}_result.jsonl")
 
 
-def predict_batch(outputs, tokenizer, fw, batch_records):
-    """Write one batch of text-only final test predictions."""
+def build_default_raw_output_file(result_file_name: str) -> str:
+    """Build the companion JSONL path that stores raw LLM text outputs."""
+    result_path = Path(result_file_name)
+    if result_path.name.endswith("_result.jsonl"):
+        raw_name = result_path.name[: -len("_result.jsonl")] + "_raw_output.jsonl"
+    else:
+        raw_name = f"{result_path.stem}_raw_output.jsonl"
+    return str(result_path.with_name(raw_name))
+
+
+def write_jsonl_record(file_handle, record: dict) -> None:
+    """Write one JSONL record and flush immediately for resumable batch runs."""
+    file_handle.write(json.dumps(record, ensure_ascii=False))
+    file_handle.write("\n")
+    file_handle.flush()
+
+
+def predict_batch(outputs, tokenizer, result_fw, raw_output_fw, batch_records):
+    """Write one batch of structured predictions plus raw LLM text outputs."""
     for output, record in zip(outputs, batch_records):
         generated_text = skip_special_tokens_transformers(tokenizer, output.outputs[0].text)
         status, labels = parse_prediction(generated_text)
@@ -146,10 +163,16 @@ def predict_batch(outputs, tokenizer, fw, batch_records):
             "status": status,
             "guideline": record["guideline"],
         }
+        raw_output_dict = {
+            "sample_id": record["sample_id"],
+            "text": record["text"],
+            "raw_output": generated_text,
+            "status": status,
+            "guideline": record["guideline"],
+        }
 
-        fw.write(json.dumps(result_dict, ensure_ascii=False))
-        fw.write("\n")
-        fw.flush()
+        write_jsonl_record(result_fw, result_dict)
+        write_jsonl_record(raw_output_fw, raw_output_dict)
 
 
 def run_llm_batch(messages, llm, sampling_params):
@@ -263,6 +286,11 @@ def parse_args():
     parser.add_argument("--prototype_dir", default=None)
     parser.add_argument("--result_file", default=None)
     parser.add_argument(
+        "--raw_output_file",
+        default=None,
+        help="Optional JSONL path that stores the raw text output from the inference LLM for each test sample.",
+    )
+    parser.add_argument(
         "--single_test_input_text",
         default=None,
         help="Run one ad-hoc input_text through retrieval plus LLM generation and print the raw model output.",
@@ -296,20 +324,29 @@ def main(args=None):
         if args.result_file
         else build_default_result_file(dataset_path, prototype_summary, args.model_name)
     )
-    file_mode = "a" if args.append else "w"
-    fw = open(result_file_name, file_mode, encoding="utf8")
-
-    task_prompt = eval(f"{args.dataset_name}_rule_prompt")
-    messages = []
-    batch_records = []
-    overall_progress = tqdm(
-        total=len(query_examples) + len(test_records),
-        desc="Overall progress | retrieve + infer",
-        unit="sample",
-        dynamic_ncols=True,
+    raw_output_file_name = (
+        args.raw_output_file
+        if args.raw_output_file
+        else build_default_raw_output_file(result_file_name)
     )
+    file_mode = "a" if args.append else "w"
+    result_fw = None
+    raw_output_fw = None
+    overall_progress = None
 
     try:
+        result_fw = open(result_file_name, file_mode, encoding="utf8")
+        raw_output_fw = open(raw_output_file_name, file_mode, encoding="utf8")
+        task_prompt = eval(f"{args.dataset_name}_rule_prompt")
+        messages = []
+        batch_records = []
+        overall_progress = tqdm(
+            total=len(query_examples) + len(test_records),
+            desc="Overall progress | retrieve + infer",
+            unit="sample",
+            dynamic_ncols=True,
+        )
+
         retrieval_records, _ = retrieve_guideline_records(
             model=ner_model,
             tokenizer=ner_tokenizer,
@@ -342,6 +379,7 @@ def main(args=None):
 
             batch_records.append(
                 {
+                    "sample_id": test_record["sample_id"],
                     "text": text,
                     "guideline": prompt_guidelines,
                 }
@@ -351,16 +389,20 @@ def main(args=None):
 
             if len(messages) >= args.batch_size:
                 outputs = run_llm_batch(messages, llm, sampling_params)
-                predict_batch(outputs, llm_tokenizer, fw, batch_records)
+                predict_batch(outputs, llm_tokenizer, result_fw, raw_output_fw, batch_records)
                 messages = []
                 batch_records = []
 
         if messages:
             outputs = run_llm_batch(messages, llm, sampling_params)
-            predict_batch(outputs, llm_tokenizer, fw, batch_records)
+            predict_batch(outputs, llm_tokenizer, result_fw, raw_output_fw, batch_records)
     finally:
-        overall_progress.close()
-        fw.close()
+        if overall_progress is not None:
+            overall_progress.close()
+        if result_fw is not None:
+            result_fw.close()
+        if raw_output_fw is not None:
+            raw_output_fw.close()
 
 
 if __name__ == "__main__":

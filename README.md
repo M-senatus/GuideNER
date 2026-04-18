@@ -102,6 +102,7 @@ By default, `run_withrule.py` starts vLLM in eager mode with `--vllm_max_model_l
 Main output:
 
 - `datasets/conll2003/Llama-3.1-8B-Instruct_word-level_Llama-3.1-8B-Instruct_result.jsonl`
+- `datasets/conll2003/Llama-3.1-8B-Instruct_word-level_Llama-3.1-8B-Instruct_raw_output.jsonl`
 
 Each JSONL record stores exactly:
 
@@ -110,6 +111,19 @@ Each JSONL record stores exactly:
 ```
 
 The filename format is `{model_name1}_word-level_{model_name2}_result.jsonl`, where `model_name1` is parsed from the guideline summary used to build the prototypes and `model_name2` is the inference LLM passed to `run_withrule.py`.
+The companion raw-output file stores one JSONL record per sample with `sample_id`, `text`, `raw_output`, `status`, and `guideline`. By default its filename is derived from the final result file by replacing `_result.jsonl` with `_raw_output.jsonl`.
+
+If you want to override the raw-output path explicitly, pass `--raw_output_file`:
+
+```bash
+CUDA_VISIBLE_DEVICES=0 python run_withrule.py \
+  --dataset_name conll2003 \
+  --model_name Llama-3.1-8B-Instruct \
+  --tagging_config tagging/configs/deberta_ner_conll2003.json \
+  --ner_checkpoint_path ../model/deberta-v3-base/deberta_ner_conll2003/checkpoint-best \
+  --prototype_dir prototypes/Llama-3.1-8B-Instruct-conll2003-prototypes \
+  --raw_output_file datasets/conll2003/custom_raw_output.jsonl
+```
 
 ### 4b. Run a single-step debug inference
 
