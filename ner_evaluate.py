@@ -1,9 +1,11 @@
 import argparse
 import json
 import os
+from pathlib import Path
 from typing import Iterable
 
 from guide_dataset_io import load_label_schema, load_test_with_labels_for_final_eval
+from tagging.src.infer.prototype_paths import infer_model_name_from_guideline_path
 
 
 def normalize_entity_type(entity_type: str) -> str:
@@ -90,11 +92,37 @@ def iter_jsonl(path: str) -> Iterable[dict]:
                 yield json.loads(stripped)
 
 
+def build_default_result_file(dataset_path: str, dataset_name: str, prototype_dir: str | None, model_name: str) -> str:
+    """Build the default evaluation file path using the prototype summary's guideline source model."""
+    resolved_prototype_dir = (
+        Path(prototype_dir).resolve()
+        if prototype_dir is not None
+        else (Path("prototypes") / f"{model_name}-{dataset_name}-prototypes").resolve()
+    )
+    summary_path = resolved_prototype_dir / "summary.json"
+    if not summary_path.exists():
+        raise FileNotFoundError(
+            "Could not resolve the default result file because prototype summary.json was not found at "
+            f"{summary_path}. Provide --result_file or --prototype_dir."
+        )
+
+    with summary_path.open("r", encoding="utf8") as f:
+        prototype_summary = json.load(f)
+
+    guideline_path = prototype_summary.get("guideline_path")
+    if not isinstance(guideline_path, str) or not guideline_path.strip():
+        raise ValueError("Prototype summary must contain a non-empty 'guideline_path' for result naming.")
+
+    guideline_model_name = infer_model_name_from_guideline_path(guideline_path)
+    return os.path.join(dataset_path, f"{guideline_model_name}_word-level_{model_name}_result.jsonl")
+
+
 def main():
     stage = "final_eval"
     parser = argparse.ArgumentParser()
     parser.add_argument("--dataset_name", default="conll2003", choices=["conll2003", "ace04", "ace05", "genia"])
     parser.add_argument("--model_name", default="Llama-3.1-8B-Instruct")
+    parser.add_argument("--prototype_dir", default=None)
     parser.add_argument("--result_file", default=None)
     args = parser.parse_args()
 
@@ -102,37 +130,36 @@ def main():
     eval_file = (
         args.result_file
         if args.result_file
-        else os.path.join(dataset_path, f"{args.model_name}_withrule_retrieval_result_detail.jsonl")
+        else build_default_result_file(dataset_path, args.dataset_name, args.prototype_dir, args.model_name)
     )
     allowed_types = {
         normalize_entity_type(label_name)
         for label_name in load_label_schema(dataset_path).keys()
     }
     gold_records = load_test_with_labels_for_final_eval(dataset_path, stage=stage)
-    gold_by_sample_id = {record["sample_id"]: record for record in gold_records}
-    if len(gold_by_sample_id) != len(gold_records):
-        raise ValueError("Duplicate sample_id values detected in final-eval test records.")
+    prediction_records = list(iter_jsonl(eval_file))
+    if len(prediction_records) != len(gold_records):
+        raise ValueError(
+            f"Prediction count {len(prediction_records)} does not match gold test count {len(gold_records)}."
+        )
     evaluator = Evaluate()
     invalid_count = 0
     success_count = 0
-    seen_prediction_ids: set[str] = set()
 
-    for record in iter_jsonl(eval_file):
+    for idx, (record, gold_record) in enumerate(zip(prediction_records, gold_records), start=1):
+        prediction_text = record.get("text")
+        if not isinstance(prediction_text, str):
+            raise ValueError(f"Prediction record {idx} must contain a string 'text' field.")
+        if prediction_text != gold_record["text"]:
+            raise ValueError(f"Prediction text at record {idx} does not match the final-eval test set order.")
+
         if record.get("status") != "success":
             invalid_count += 1
             continue
-        sample_id = record.get("sample_id")
-        if not isinstance(sample_id, str):
-            raise ValueError("Final-eval prediction records must contain a string sample_id.")
-        if sample_id not in gold_by_sample_id:
-            raise ValueError(f"Prediction sample_id '{sample_id}' was not found in the test set.")
-        if sample_id in seen_prediction_ids:
-            raise ValueError(f"Duplicate prediction sample_id '{sample_id}' found in {eval_file}.")
-        seen_prediction_ids.add(sample_id)
         success_count += 1
         evaluator.update(
-            record.get("predicted_labels", []),
-            gold_by_sample_id[sample_id]["entity_labels"],
+            record.get("labels", []),
+            gold_record["entity_labels"],
             allowed_types,
         )
 

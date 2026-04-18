@@ -15,7 +15,10 @@ from tagging.src.infer.guideline_retrieval import (
     load_saved_prototypes,
     retrieve_guideline_records,
 )
-from tagging.src.infer.prototype_paths import prototype_dir_from_model_and_dataset
+from tagging.src.infer.prototype_paths import (
+    infer_model_name_from_guideline_path,
+    prototype_dir_from_model_and_dataset,
+)
 from tagging.src.models.deberta_token_classifier import (
     load_checkpoint_model,
     load_tokenizer as load_ner_tokenizer,
@@ -121,17 +124,27 @@ def parse_prediction(text: str) -> tuple[str, list]:
     return "success", parsed
 
 
+def build_default_result_file(dataset_path: str, prototype_summary: dict, entity_model_name: str) -> str:
+    """Build the default result filename from the guideline-source model and inference LLM."""
+    guideline_path = prototype_summary.get("guideline_path")
+    if not isinstance(guideline_path, str) or not guideline_path.strip():
+        raise ValueError("Prototype summary must contain a non-empty 'guideline_path' for result naming.")
+
+    guideline_model_name = infer_model_name_from_guideline_path(guideline_path)
+    return os.path.join(dataset_path, f"{guideline_model_name}_word-level_{entity_model_name}_result.jsonl")
+
+
 def predict_batch(outputs, tokenizer, fw, batch_records):
     """Write one batch of text-only final test predictions."""
     for output, record in zip(outputs, batch_records):
         generated_text = skip_special_tokens_transformers(tokenizer, output.outputs[0].text)
-        status, predicted_labels = parse_prediction(generated_text)
+        status, labels = parse_prediction(generated_text)
 
         result_dict = {
-            "sample_id": record["sample_id"],
             "text": record["text"],
+            "labels": labels,
             "status": status,
-            "predicted_labels": predicted_labels,
+            "guideline": record["guideline"],
         }
 
         fw.write(json.dumps(result_dict, ensure_ascii=False))
@@ -268,7 +281,7 @@ def main(args=None):
 
     ner_tokenizer = load_ner_tokenizer(ner_checkpoint_path)
     ner_model = load_checkpoint_model(ner_checkpoint_path, output_hidden_states=True)
-    prototype_vectors, prototype_metadata, _ = load_saved_prototypes(prototype_dir)
+    prototype_vectors, prototype_metadata, prototype_summary = load_saved_prototypes(prototype_dir)
     query_examples = load_query_examples(
         tagging_config,
         split="test",
@@ -281,7 +294,7 @@ def main(args=None):
     result_file_name = (
         args.result_file
         if args.result_file
-        else os.path.join(dataset_path, f"{args.model_name}_withrule_retrieval_result_detail.jsonl")
+        else build_default_result_file(dataset_path, prototype_summary, args.model_name)
     )
     file_mode = "a" if args.append else "w"
     fw = open(result_file_name, file_mode, encoding="utf8")
@@ -329,8 +342,8 @@ def main(args=None):
 
             batch_records.append(
                 {
-                    "sample_id": test_record["sample_id"],
                     "text": text,
+                    "guideline": prompt_guidelines,
                 }
             )
             messages.append(message)

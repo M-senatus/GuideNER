@@ -22,7 +22,7 @@ TEMPERATURE="${TEMPERATURE:-0}"
 TOP_P="${TOP_P:-1}"
 RETRIEVAL_TOP_K="${RETRIEVAL_TOP_K:-10}"
 CUDA_DEVICES="${CUDA_DEVICES:-0}"
-RESULT_FILE="${RESULT_FILE:-datasets/${DATASET_NAME}/${MODEL_NAME}_withrule_retrieval_result_detail.jsonl}"
+RESULT_FILE="${RESULT_FILE:-}"
 PROTOTYPE_DIR="${PROTOTYPE_DIR:-prototypes/${MODEL_NAME}-${DATASET_NAME}-prototypes}"
 
 usage() {
@@ -48,7 +48,7 @@ Environment overrides:
   TEMPERATURE    Generation temperature (default: 0)
   TOP_P          Generation top-p (default: 1)
   CUDA_DEVICES   CUDA device ids (default: 0)
-  RESULT_FILE    Output JSONL path for final predictions
+  RESULT_FILE    Output JSONL path for final predictions (default: inferred by Python)
   PROTOTYPE_DIR  Retrieved-guideline prototype directory
 
 Examples:
@@ -100,17 +100,21 @@ case "$COMMAND" in
     require_dir "../model/deberta-v3-base/deberta_ner_${DATASET_NAME}/checkpoint-best"
     require_dir "$PROTOTYPE_DIR"
 
-    "$PYTHON_BIN" -u run_withrule.py \
-      --dataset_name "$DATASET_NAME" \
-      --model_name "$MODEL_NAME" \
-      --temperature "$TEMPERATURE" \
-      --top_p "$TOP_P" \
-      --retrieval_top_k "$RETRIEVAL_TOP_K" \
-      --tagging_config "tagging/configs/deberta_ner_${DATASET_NAME}.json" \
-      --ner_checkpoint_path "../model/deberta-v3-base/deberta_ner_${DATASET_NAME}/checkpoint-best" \
-      --prototype_dir "$PROTOTYPE_DIR" \
-      --result_file "$RESULT_FILE" \
-      "$@"
+    infer_args=(
+      --dataset_name "$DATASET_NAME"
+      --model_name "$MODEL_NAME"
+      --temperature "$TEMPERATURE"
+      --top_p "$TOP_P"
+      --retrieval_top_k "$RETRIEVAL_TOP_K"
+      --tagging_config "tagging/configs/deberta_ner_${DATASET_NAME}.json"
+      --ner_checkpoint_path "../model/deberta-v3-base/deberta_ner_${DATASET_NAME}/checkpoint-best"
+      --prototype_dir "$PROTOTYPE_DIR"
+    )
+    if [[ -n "$RESULT_FILE" ]]; then
+      infer_args+=(--result_file "$RESULT_FILE")
+    fi
+
+    "$PYTHON_BIN" -u run_withrule.py "${infer_args[@]}" "$@"
     ;;
 
   single-test)
@@ -131,11 +135,16 @@ case "$COMMAND" in
     ;;
 
   evaluate)
-    "$PYTHON_BIN" ner_evaluate.py \
-      --dataset_name "$DATASET_NAME" \
-      --model_name "$MODEL_NAME" \
-      --result_file "$RESULT_FILE" \
-      "$@"
+    evaluate_args=(
+      --dataset_name "$DATASET_NAME"
+      --model_name "$MODEL_NAME"
+      --prototype_dir "$PROTOTYPE_DIR"
+    )
+    if [[ -n "$RESULT_FILE" ]]; then
+      evaluate_args+=(--result_file "$RESULT_FILE")
+    fi
+
+    "$PYTHON_BIN" ner_evaluate.py "${evaluate_args[@]}" "$@"
     ;;
 
   help|-h|--help)

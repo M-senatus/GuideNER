@@ -101,7 +101,15 @@ By default, `run_withrule.py` starts vLLM in eager mode with `--vllm_max_model_l
 
 Main output:
 
-- `datasets/conll2003/Llama-3.1-8B-Instruct_withrule_retrieval_result_detail.jsonl`
+- `datasets/conll2003/Llama-3.1-8B-Instruct_word-level_Llama-3.1-8B-Instruct_result.jsonl`
+
+Each JSONL record stores exactly:
+
+```json
+{"text": "EU rejects German call to boycott British lamb .", "labels": [["EU", "organization"]], "status": "success", "guideline": "Organization: ['company', 'agency']"}
+```
+
+The filename format is `{model_name1}_word-level_{model_name2}_result.jsonl`, where `model_name1` is parsed from the guideline summary used to build the prototypes and `model_name2` is the inference LLM passed to `run_withrule.py`.
 
 ### 4b. Run a single-step debug inference
 
@@ -119,7 +127,7 @@ This step is the only stage that reads test labels and computes the final Precis
 python ner_evaluate.py \
   --dataset_name conll2003 \
   --model_name Llama-3.1-8B-Instruct \
-  --result_file datasets/conll2003/Llama-3.1-8B-Instruct_withrule_retrieval_result_detail.jsonl
+  --result_file datasets/conll2003/Llama-3.1-8B-Instruct_word-level_Llama-3.1-8B-Instruct_result.jsonl
 ```
 
 ### Optional wrapper scripts
